@@ -11,3 +11,4 @@ backend/uploads/*
 !backend/uploads/.gitkeep
 coverage/
 .vercel
+frontend/tsconfig.tsbuildinfo

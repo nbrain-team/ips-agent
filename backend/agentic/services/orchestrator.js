@@ -81,6 +81,7 @@ Provide a natural-language query; table discovery and SQL generation are automat
     conversationHistory = [],
     sessionId,
     userId,
+    user = null, // { id, email, role } — used for permission-scoped tools (email)
     clientId = clientConfig.CLIENT_ID,
     projectId = null,
     streamCallback = () => {},
@@ -97,7 +98,7 @@ Provide a natural-language query; table discovery and SQL generation are automat
     const outputGuidance = await this.getOutputGuidance(userId).catch(() => '');
 
     const context = {
-      userMessage, conversationHistory, sessionId, userId, clientId, projectId,
+      userMessage, conversationHistory, sessionId, userId, user, clientId, projectId,
       streamCallback, imageAttachments, documentAttachments,
       analysis, outputGuidance, startedAt,
     };
@@ -230,6 +231,7 @@ Provide a natural-language query; table discovery and SQL generation are automat
             try {
               result = await tool.execute(tu.input, {
                 userId, clientId: ctx.clientId, projectId: ctx.projectId, sessionId, dbPool: this.dbPool,
+                userEmail: ctx.user?.email, userRole: ctx.user?.role,
               });
             } catch (err) {
               result = { success: false, error: err.message };
@@ -361,6 +363,7 @@ Provide a natural-language query; table discovery and SQL generation are automat
           result = await tool.execute(step.input || {}, {
             userId: ctx.userId, clientId: ctx.clientId, projectId: ctx.projectId,
             sessionId: ctx.sessionId, dbPool: this.dbPool,
+            userEmail: ctx.user?.email, userRole: ctx.user?.role,
           });
         } catch (err) {
           result = { success: false, error: err.message };
@@ -528,6 +531,7 @@ Return ONLY JSON: {"goal": "...", "steps": [{"tool": "tool_name", "description":
               ? await tool.execute(tu.input, {
                   userId: ctx.userId, clientId: ctx.clientId, projectId: ctx.projectId,
                   sessionId: ctx.sessionId, dbPool: this.dbPool,
+                  userEmail: ctx.user?.email, userRole: ctx.user?.role,
                 })
               : { success: false, error: `Unknown tool: ${tu.name}` };
           } catch (err) {

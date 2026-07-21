@@ -131,6 +131,7 @@ async function start() {
 
   // 4. Routes
   app.use('/api/auth', require('./routes/auth')(dbPool));
+  app.use('/api/auth', require('./routes/auth-microsoft')(dbPool));
   app.use('/api/admin/users', require('./routes/admin-users')(dbPool));
   app.use('/api/agent-chat', require('./agentic/routes/index')(dbPool, () => orchestrator));
   app.use('/api/data-inventory', require('./routes/data-inventory')(dbPool, billingDbPool));
@@ -172,6 +173,31 @@ async function start() {
       res.status(500).json({ success: false, error: err.message });
     }
   });
+  // Manual email sync trigger + status
+  const msGraph = require('./agentic/services/msGraph');
+  app.post('/api/admin/sync-emails', requireAdmin, async (_req, res) => {
+    try {
+      const summary = await msGraph.syncAllMailboxes(dbPool);
+      res.json({ success: true, summary });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+  app.get('/api/admin/email-sync-status', requireAdmin, async (_req, res) => {
+    try {
+      const mailboxes = await dbPool.query(
+        `SELECT email, display_name, sync_status, sync_error, last_synced_at, message_count
+         FROM ms_mailboxes ORDER BY email`
+      );
+      const totals = await dbPool.query(
+        `SELECT COUNT(*)::int AS messages, MAX(received_at) AS latest FROM ms_emails`
+      );
+      res.json({ configured: msGraph.isConfigured(), mailboxes: mailboxes.rows, ...totals.rows[0] });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/admin/database-info', requireAdmin, async (_req, res) => {
     try {
       const tables = await dbPool.query(`
@@ -192,7 +218,20 @@ async function start() {
     console.log(`🚀 ${clientConfig.CLIENT_NAME} AI Platform backend on :${port}`);
   });
 
-  // 6. Background table-metadata vectorization (best-effort, non-blocking)
+  // 6. Scheduled Microsoft 365 email sync (all tenant users, last 30 days)
+  const msGraphSvc = require('./agentic/services/msGraph');
+  if (msGraphSvc.isConfigured()) {
+    const intervalMin = parseInt(process.env.EMAIL_SYNC_INTERVAL_MIN || '60', 10);
+    const runSync = () =>
+      msGraphSvc.syncAllMailboxes(dbPool).catch((err) => console.warn('Email sync failed:', err.message));
+    setTimeout(runSync, 15000); // first sync shortly after boot
+    setInterval(runSync, intervalMin * 60000);
+    console.log(`📧 M365 email sync scheduled every ${intervalMin} min`);
+  } else {
+    console.log('📧 M365 email sync disabled (MS_GRAPH_* env vars not set)');
+  }
+
+  // 7. Background table-metadata vectorization (best-effort, non-blocking)
   setTimeout(async () => {
     try {
       const vec = new TableMetadataVectorization(dbPool);

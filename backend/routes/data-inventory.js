@@ -29,10 +29,19 @@ module.exports = function dataInventoryRoutes(dbPool, billingDbPool) {
         .query(`SELECT COUNT(*)::int AS n FROM agent_memories`)
         .catch(() => ({ rows: [{ n: 0 }] }));
 
+      const emails = await dbPool
+        .query(
+          `SELECT (SELECT COUNT(*)::int FROM ms_mailboxes WHERE sync_status = 'ok') AS mailboxes,
+                  COUNT(*)::int AS messages, MAX(received_at) AS latest
+           FROM ms_emails`
+        )
+        .catch(() => ({ rows: [{ mailboxes: 0, messages: 0, latest: null }] }));
+
       res.json({
         data_tables: tables.rows,
         knowledge_base: knowledge.rows,
         memories: memories.rows[0].n,
+        emails: emails.rows[0],
         billing_database_connected: !!billingDbPool,
       });
     } catch (err) {

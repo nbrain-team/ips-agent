@@ -24,7 +24,12 @@ module.exports = function adminUsersRoutes(dbPool) {
   router.post('/', requireUserManager, async (req, res) => {
     const { email, name, role, password } = req.body || {};
     if (!email) return res.status(400).json({ error: 'email required' });
-    if (role === 'admin' && req.user.role !== 'admin') {
+    // IPS rule: manually created users with NON-ipsaecorp.com addresses default
+    // to admin (they can see all mailboxes). IPS-domain users default to 'user'.
+    const domain = (process.env.SSO_ALLOWED_DOMAIN || 'ipsaecorp.com').toLowerCase();
+    const defaultRole = email.toLowerCase().endsWith(`@${domain}`) ? 'user' : 'admin';
+    const finalRole = ['user', 'user_manager', 'admin'].includes(role) ? role : defaultRole;
+    if (finalRole === 'admin' && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Only admins can create admins' });
     }
     const tempPassword = password || crypto.randomBytes(9).toString('base64url');
@@ -34,7 +39,7 @@ module.exports = function adminUsersRoutes(dbPool) {
         `INSERT INTO users (email, name, password_hash, role, must_change_password)
          VALUES (LOWER($1), $2, $3, $4, true)
          RETURNING id, email, name, role`,
-        [email, name || null, hash, ['user', 'user_manager', 'admin'].includes(role) ? role : 'user']
+        [email, name || null, hash, finalRole]
       );
       res.json({ user: result.rows[0], temp_password: tempPassword });
     } catch (err) {

@@ -17,6 +17,8 @@ const EXCLUDED_TABLES = [
   'agent_notifications', 'agent_weekly_digests', 'agent_pinecone_sync',
   'agent_memories', 'agent_traces', 'agent_chat_shares', 'agent_output_templates',
   'website_content', 'schema_migrations', 'pg_stat_statements',
+  // Email tables are permission-scoped — ONLY reachable via search_user_emails
+  'ms_emails', 'ms_mailboxes',
 ];
 
 class TableMetadataVectorization {

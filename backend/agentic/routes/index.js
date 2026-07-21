@@ -199,6 +199,7 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
         conversationHistory: history.rows.reverse(),
         sessionId: parseInt(req.params.id, 10),
         userId: req.user.id,
+        user: req.user,
         streamCallback,
         imageAttachments: imageAttachments || [],
         documentAttachments: documentAttachments || [],

@@ -5,12 +5,22 @@ import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+const SSO_ERRORS: Record<string, string> = {
+  sso_failed: "Microsoft sign-in failed. Please try again or use your password.",
+  sso_denied: "Microsoft sign-in was cancelled.",
+  sso_not_configured: "Microsoft sign-in is not configured yet.",
+  not_authorized: "Your Microsoft account isn't authorized for this platform. Ask an admin to add you.",
+  account_disabled: "This account has been disabled. Contact an admin.",
+};
+
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    SSO_ERRORS[params.get("error") || ""] || null
+  );
   const [loading, setLoading] = useState(false);
 
   async function submit(e: React.FormEvent) {
@@ -72,6 +82,23 @@ function LoginForm() {
             {loading ? "Signing in…" : "Sign in"}
           </Button>
         </form>
+        <div className="flex items-center gap-3 my-4">
+          <div className="h-px flex-1 bg-ips-border" />
+          <span className="text-[11px] text-gray-400 uppercase tracking-wide">or</span>
+          <div className="h-px flex-1 bg-ips-border" />
+        </div>
+        <a
+          href="/api/auth/microsoft"
+          className="flex items-center justify-center gap-2 w-full border border-ips-border rounded-md py-2.5 text-sm font-medium text-ips-charcoal hover:bg-ips-surface transition-colors"
+        >
+          <svg width="16" height="16" viewBox="0 0 21 21" aria-hidden="true">
+            <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+            <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+            <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+            <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+          </svg>
+          Sign in with Microsoft
+        </a>
         <p className="text-[10px] text-gray-400 text-center mt-6">
           Empowering Industries, Start to Finish — SE New Mexico &amp; the Permian Basin
         </p>

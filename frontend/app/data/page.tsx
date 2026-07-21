@@ -3,12 +3,13 @@ import { useEffect, useState } from "react";
 import Header from "@/components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Database, BookOpen, Brain, Landmark } from "lucide-react";
+import { Database, BookOpen, Brain, Landmark, Mail } from "lucide-react";
 
 interface Inventory {
   data_tables: { table_name: string; source_tag: string; row_count: number; description: string; updated_at: string }[];
   knowledge_base: { category: string; source: string; chunks: number }[];
   memories: number;
+  emails?: { mailboxes: number; messages: number; latest: string | null };
   billing_database_connected: boolean;
 }
 
@@ -38,7 +39,7 @@ export default function DataPage() {
         </div>
         {error && <p className="text-sm text-ips-red">{error}</p>}
 
-        <div className="grid md:grid-cols-3 gap-4">
+        <div className="grid md:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="flex flex-row items-center gap-2">
               <Database className="h-4 w-4 text-ips-red" />
@@ -64,6 +65,18 @@ export default function DataPage() {
               <CardTitle className="text-sm">Long-term memories</CardTitle>
             </CardHeader>
             <CardContent className="text-3xl font-semibold">{inv?.memories ?? "—"}</CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center gap-2">
+              <Mail className="h-4 w-4 text-ips-steel" />
+              <CardTitle className="text-sm">Synced emails</CardTitle>
+            </CardHeader>
+            <CardContent className="text-3xl font-semibold">
+              {inv?.emails?.messages?.toLocaleString() ?? "—"}
+              <span className="block text-xs font-normal text-gray-400 mt-1">
+                {inv?.emails?.mailboxes ? `${inv.emails.mailboxes} mailboxes · last 30 days · scoped to you unless admin` : "M365 sync pending"}
+              </span>
+            </CardContent>
           </Card>
         </div>
 

@@ -88,16 +88,30 @@ Present the result as a SIMPLE, friendly list (source name — one-line descript
         });
       }
 
+      const meetings = await db
+        .query(`SELECT COUNT(*)::int AS n, MAX(meeting_start) AS latest FROM meeting_transcripts`)
+        .catch(() => ({ rows: [{ n: 0, latest: null }] }));
+      if (meetings.rows[0].n > 0) {
+        sources.push({
+          source: 'Meeting transcripts (Read.ai)',
+          what: 'Meeting recordings auto-ingested from Read.ai — summaries, action items, and full transcripts, searchable by meaning',
+          meetings: meetings.rows[0].n,
+          latest_meeting: meetings.rows[0].latest,
+        });
+      }
+
       if (knowledge.rows.length) {
         sources.push({
           source: 'Knowledge base (documents & website)',
           what: 'Ingested documents and ipsaecorp.com content, searchable by meaning and keyword',
-          collections: knowledge.rows.map((k) => ({
-            category: k.category,
-            origin: k.source,
-            chunks: k.chunks,
-            last_updated: k.last_updated,
-          })),
+          collections: knowledge.rows
+            .filter((k) => k.category !== 'meeting_transcript')
+            .map((k) => ({
+              category: k.category,
+              origin: k.source,
+              chunks: k.chunks,
+              last_updated: k.last_updated,
+            })),
         });
       }
 

@@ -138,6 +138,7 @@ async function start() {
   app.use('/api/exports', require('./routes/exports')(dbPool));
   app.use('/api/output-templates', require('./routes/output-templates')(dbPool));
   app.use('/api/channels', require('./routes/channels/api')(dbPool, () => orchestrator));
+  app.use('/api/webhooks', require('./routes/webhooks')(dbPool));
 
   // Health check — run a real SELECT 1 so DB status is accurate
   app.get('/health', async (_req, res) => {

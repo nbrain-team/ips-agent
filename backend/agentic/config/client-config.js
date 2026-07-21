@@ -74,7 +74,7 @@ module.exports = {
   // ==========================================================================
   AI_MODEL: {
     primary: 'claude-opus-4-8',
-    content: 'gpt-4.1',
+    content: 'gpt-5.5',
     fast: 'gpt-4.1-mini',
     long_context: 'gemini-2.5-pro',
     flash: 'gemini-2.0-flash',

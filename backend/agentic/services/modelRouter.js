@@ -27,7 +27,7 @@ const MODEL_REGISTRY = {
   },
   'gpt-content': {
     provider: 'openai',
-    modelId: process.env.OPENAI_CONTENT_MODEL || 'gpt-4.1',
+    modelId: process.env.OPENAI_CONTENT_MODEL || 'gpt-5.5',
     strengths: ['content', 'creative', 'email'],
     maxTokens: 16384,
     costTier: 'medium',
@@ -160,10 +160,14 @@ class ModelRouter {
       return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     }
     if (model.provider === 'openai') {
+      // GPT-5.x models require max_completion_tokens and only support the
+      // default temperature; older models still take max_tokens + temperature.
+      const isGpt5 = /^gpt-5/.test(model.modelId);
       const res = await this.openai.chat.completions.create({
         model: model.modelId,
-        max_tokens: Math.min(maxTokens, model.maxTokens),
-        temperature,
+        ...(isGpt5
+          ? { max_completion_tokens: Math.min(maxTokens, model.maxTokens) }
+          : { max_tokens: Math.min(maxTokens, model.maxTokens), temperature }),
         messages: [
           ...(system ? [{ role: 'system', content: system }] : []),
           { role: 'user', content: prompt },

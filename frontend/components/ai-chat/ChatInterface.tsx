@@ -255,6 +255,9 @@ export default function ChatInterface({
               parserRef.current.reset();
               setStreamText("");
               startPhraseCycle();
+            } else if (type === "session_title") {
+              // Server renamed the session after the first exchange
+              onFirstMessage();
             } else if (type === "complete") {
               gotComplete = true;
               finalResult = data;
@@ -295,12 +298,7 @@ export default function ChatInterface({
             },
           ]);
         }
-        if (isFirst) {
-          fetch(`/api/agent-chat/sessions/${sessionId}/generate-title`, {
-            method: "POST",
-            credentials: "include",
-          }).then(() => onFirstMessage());
-        }
+        if (isFirst) onFirstMessage();
       } catch (err: any) {
         if (err.name !== "AbortError") {
           setMessages((prev) => [

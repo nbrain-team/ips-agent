@@ -33,6 +33,47 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
   const requireAuth = requireAuthFactory(dbPool);
   const requireAdmin = requireAdminFactory(dbPool);
 
+  /**
+   * Server-side auto-title: if the session is still called "New chat" after a
+   * successful exchange, summarize the first exchange into a unique title.
+   * Runs inside the SSE request so the client gets a `session_title` event.
+   */
+  async function maybeAutoTitle(sessionId, userId) {
+    const s = await dbPool.query(
+      `SELECT title FROM agent_chat_sessions WHERE id = $1 AND user_id = $2`,
+      [sessionId, userId]
+    );
+    if (!s.rows.length || !/^new chat$/i.test(String(s.rows[0].title || '').trim())) return null;
+
+    const messages = await dbPool.query(
+      `SELECT role, content FROM agent_chat_messages WHERE session_id = $1 ORDER BY created_at ASC, id ASC LIMIT 2`,
+      [sessionId]
+    );
+    if (!messages.rows.length) return null;
+
+    let title = '';
+    try {
+      const orchestrator = getOrchestrator();
+      const { text } = await orchestrator.modelRouter.generateText({
+        taskType: 'summarization',
+        maxTokens: 30,
+        temperature: 0.3,
+        prompt: `Write a specific 3-6 word title for this chat. No quotes, no trailing punctuation, no generic words like "chat" or "conversation":\n\n${messages.rows
+          .map((m) => `${m.role}: ${String(m.content).slice(0, 500)}`)
+          .join('\n')}`,
+      });
+      title = text.trim().replace(/^["']|["']$/g, '').replace(/[.!?]+$/, '').slice(0, 80);
+    } catch (_e) { /* fall through to heuristic */ }
+    if (!title) title = String(messages.rows[0].content).replace(/\s+/g, ' ').trim().slice(0, 50);
+    if (!title) return null;
+
+    await dbPool.query(
+      `UPDATE agent_chat_sessions SET title = $1, updated_at = NOW() WHERE id = $2`,
+      [title, sessionId]
+    );
+    return title;
+  }
+
   // ==========================================================================
   // Sessions
   // ==========================================================================
@@ -112,35 +153,12 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
     res.json({ success: true });
   });
 
-  // Auto-title from the first exchange (fast model, with fallback)
+  // Auto-title from the first exchange (manual trigger; same logic runs
+  // automatically inside the message stream)
   router.post('/sessions/:id/generate-title', requireAuth, async (req, res) => {
     try {
-      const messages = await dbPool.query(
-        `SELECT role, content FROM agent_chat_messages WHERE session_id = $1 ORDER BY created_at ASC LIMIT 2`,
-        [req.params.id]
-      );
-      if (!messages.rows.length) return res.json({ title: 'New chat' });
-      let title = 'New chat';
-      try {
-        const orchestrator = getOrchestrator();
-        const { text } = await orchestrator.modelRouter.generateText({
-          taskType: 'summarization',
-          maxTokens: 30,
-          temperature: 0.3,
-          prompt: `Write a 3-6 word title for this chat (no quotes, no punctuation at the end):\n\n${messages.rows
-            .map((m) => `${m.role}: ${String(m.content).slice(0, 500)}`)
-            .join('\n')}`,
-        });
-        title = text.trim().replace(/^["']|["']$/g, '').slice(0, 80) || title;
-      } catch (_e) {
-        title = String(messages.rows[0].content).slice(0, 50) || 'New chat';
-      }
-      await dbPool.query(`UPDATE agent_chat_sessions SET title = $1 WHERE id = $2 AND user_id = $3`, [
-        title,
-        req.params.id,
-        req.user.id,
-      ]);
-      res.json({ title });
+      const title = await maybeAutoTitle(parseInt(req.params.id, 10), req.user.id);
+      res.json({ title: title || 'New chat' });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -206,6 +224,10 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
       });
 
       if (result.success) {
+        try {
+          const title = await maybeAutoTitle(parseInt(req.params.id, 10), req.user.id);
+          if (title) streamCallback({ type: 'session_title', data: { title } });
+        } catch (_e) { /* titling is best-effort */ }
         streamCallback({ type: 'complete', data: result });
       }
       // (error events are emitted inside processQuery)

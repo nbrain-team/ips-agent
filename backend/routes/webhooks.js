@@ -20,7 +20,9 @@ const { ingestMeeting } = require('../agentic/services/readaiIngest');
 function verifyReadaiSignature(req) {
   const key = process.env.READAI_SIGNING_KEY;
   if (!key) return true; // signature enforcement off until the key is configured
-  const header = String(req.headers['x-read-signature'] || '').trim();
+  // ?sig= fallback exists for the browser-based backfill, where a custom
+  // header would force a CORS preflight.
+  const header = String(req.headers['x-read-signature'] || req.query.sig || '').trim();
   if (!header || !req.rawBody) return false;
   const provided = header.replace(/^sha256=/i, '');
 

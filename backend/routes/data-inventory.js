@@ -33,6 +33,14 @@ module.exports = function dataInventoryRoutes(dbPool, billingDbPool) {
         .query(`SELECT COUNT(*)::int AS n, MAX(created_at) AS last_updated FROM agent_memories`)
         .catch(() => ({ rows: [{ n: 0, last_updated: null }] }));
 
+      const meetings = await dbPool
+        .query(
+          `SELECT source, COUNT(*)::int AS meetings, COALESCE(SUM(chunk_count),0)::int AS chunks,
+                  MAX(meeting_start) AS latest_meeting, MAX(updated_at) AS last_ingested
+           FROM meeting_transcripts GROUP BY source ORDER BY source`
+        )
+        .catch(() => ({ rows: [] }));
+
       const emails = await dbPool
         .query(
           `SELECT (SELECT COUNT(*)::int FROM ms_mailboxes WHERE sync_status = 'ok') AS mailboxes,
@@ -61,6 +69,13 @@ module.exports = function dataInventoryRoutes(dbPool, billingDbPool) {
         data_tables: rows,
         knowledge_base: knowledge.rows,
         memories: { count: memories.rows[0].n, last_updated: memories.rows[0].last_updated },
+        meetings: {
+          by_source: meetings.rows,
+          total: meetings.rows.reduce((s, m) => s + m.meetings, 0),
+          chunks: meetings.rows.reduce((s, m) => s + m.chunks, 0),
+          latest_meeting: maxDate(meetings.rows, 'latest_meeting'),
+          last_ingested: maxDate(meetings.rows, 'last_ingested'),
+        },
         emails: emails.rows[0],
         billing_database_connected: !!billingDbPool,
         summary: {

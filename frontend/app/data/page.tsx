@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import Header from "@/components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Database, BookOpen, Brain, Landmark, Mail, Clock } from "lucide-react";
+import { Database, BookOpen, Brain, Landmark, Mail, Mic, Clock } from "lucide-react";
 
 interface DataTable {
   table_name: string;
@@ -21,6 +21,13 @@ interface Inventory {
   data_tables: DataTable[];
   knowledge_base: { category: string; source: string; chunks: number; last_updated: string | null }[];
   memories: { count: number; last_updated: string | null };
+  meetings: {
+    by_source: { source: string; meetings: number; chunks: number; latest_meeting: string | null; last_ingested: string | null }[];
+    total: number;
+    chunks: number;
+    latest_meeting: string | null;
+    last_ingested: string | null;
+  };
   emails: {
     mailboxes: number;
     mailboxes_total: number;
@@ -100,7 +107,7 @@ export default function DataPage() {
         {error && <p className="text-sm text-ips-red">{error}</p>}
 
         {/* Summary cards */}
-        <div className="grid md:grid-cols-4 gap-4">
+        <div className="grid md:grid-cols-3 lg:grid-cols-5 gap-4">
           <Card>
             <CardHeader className="flex flex-row items-center gap-2">
               <Database className="h-4 w-4 text-ips-red" />
@@ -151,6 +158,26 @@ export default function DataPage() {
                 <Freshness label="Newest email" date={inv?.emails?.latest_message} />
               </div>
               <p className="text-[10px] text-gray-400 mt-1.5">Scoped to your mailbox unless you&apos;re an admin.</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center gap-2">
+              <Mic className="h-4 w-4 text-ips-red" />
+              <CardTitle className="text-sm">Meeting transcripts</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-semibold">{inv?.meetings?.total?.toLocaleString() ?? "—"}</div>
+              <div className="text-xs text-ips-charcoal-600 mt-1">
+                meetings ·{" "}
+                {inv?.meetings?.by_source
+                  ?.map((m) => `${m.meetings} ${m.source.replace(".ai", "")}`)
+                  .join(" + ") || "—"}
+              </div>
+              <div className="mt-2 space-y-0.5 flex flex-col">
+                <Freshness label="Latest meeting" date={inv?.meetings?.latest_meeting} />
+                <Freshness label="Last ingested" date={inv?.meetings?.last_ingested} />
+              </div>
             </CardContent>
           </Card>
 

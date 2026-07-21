@@ -29,6 +29,7 @@ function parsePayload(payload) {
 
   return {
     sessionId: String(p.session_id || p.id || crypto.createHash('sha256').update(JSON.stringify(p)).digest('hex').slice(0, 24)),
+    source: p.source || 'read.ai',
     trigger: p.trigger || null,
     title: p.title || 'Untitled meeting',
     start: p.start_time || null,
@@ -80,10 +81,11 @@ async function ingestMeeting(dbPool, payload) {
 
   await dbPool.query(
     `INSERT INTO meeting_transcripts
-       (session_id, title, meeting_start, meeting_end, owner_email, participants,
+       (session_id, source, title, meeting_start, meeting_end, owner_email, participants,
         summary, action_items, key_questions, topics, report_url, transcript_text, raw_payload)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      ON CONFLICT (session_id) DO UPDATE SET
+       source = EXCLUDED.source,
        title = EXCLUDED.title, meeting_start = EXCLUDED.meeting_start,
        meeting_end = EXCLUDED.meeting_end, owner_email = EXCLUDED.owner_email,
        participants = EXCLUDED.participants, summary = EXCLUDED.summary,
@@ -92,7 +94,7 @@ async function ingestMeeting(dbPool, payload) {
        transcript_text = EXCLUDED.transcript_text, raw_payload = EXCLUDED.raw_payload,
        updated_at = NOW()`,
     [
-      meeting.sessionId, meeting.title, meeting.start, meeting.end, meeting.ownerEmail,
+      meeting.sessionId, meeting.source, meeting.title, meeting.start, meeting.end, meeting.ownerEmail,
       JSON.stringify(meeting.participants), meeting.summary, JSON.stringify(meeting.actionItems),
       JSON.stringify(meeting.keyQuestions), JSON.stringify(meeting.topics),
       meeting.reportUrl, meeting.transcriptText.slice(0, 2000000), JSON.stringify(payload).slice(0, 2000000),
@@ -110,9 +112,9 @@ async function ingestMeeting(dbPool, payload) {
     const embedding = await embedText(chunk);
     await dbPool.query(
       `INSERT INTO website_content (url, title, content, category, source, embedding, content_hash)
-       VALUES ($1, $2, $3, 'meeting_transcript', 'read.ai', $4::vector, $5)
+       VALUES ($1, $2, $3, 'meeting_transcript', $4, $5::vector, $6)
        ON CONFLICT (content_hash) DO NOTHING`,
-      [marker, meeting.title, chunk, toVectorLiteral(embedding), hash]
+      [marker, meeting.title, chunk, meeting.source, toVectorLiteral(embedding), hash]
     );
     saved++;
   }

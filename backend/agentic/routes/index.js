@@ -54,14 +54,19 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
     let title = '';
     try {
       const orchestrator = getOrchestrator();
-      const { text } = await orchestrator.modelRouter.generateText({
-        taskType: 'summarization',
-        maxTokens: 30,
-        temperature: 0.3,
-        prompt: `Write a specific 3-6 word title for this chat. No quotes, no trailing punctuation, no generic words like "chat" or "conversation":\n\n${messages.rows
-          .map((m) => `${m.role}: ${String(m.content).slice(0, 500)}`)
-          .join('\n')}`,
-      });
+      // 'classification' routes to the OpenAI fast model — cheap, and avoids
+      // Anthropic 529 retry backoff blocking the stream. Hard 10s cap either way.
+      const { text } = await Promise.race([
+        orchestrator.modelRouter.generateText({
+          taskType: 'classification',
+          maxTokens: 30,
+          temperature: 0.3,
+          prompt: `Write a specific 3-6 word title for this chat. No quotes, no trailing punctuation, no generic words like "chat" or "conversation":\n\n${messages.rows
+            .map((m) => `${m.role}: ${String(m.content).slice(0, 500)}`)
+            .join('\n')}`,
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('title timeout')), 10000)),
+      ]);
       title = text.trim().replace(/^["']|["']$/g, '').replace(/[.!?]+$/, '').slice(0, 80);
     } catch (_e) { /* fall through to heuristic */ }
     if (!title) title = String(messages.rows[0].content).replace(/\s+/g, ' ').trim().slice(0, 50);

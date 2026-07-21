@@ -10,6 +10,34 @@ const express = require('express');
 const crypto = require('crypto');
 const { ingestMeeting } = require('../agentic/services/readaiIngest');
 
+/**
+ * Read.ai signs webhooks: HMAC-SHA256 over the RAW request body, delivered in
+ * the X-Read-Signature header. Their docs don't pin down whether the signing
+ * key is used as-is or base64-decoded, nor hex vs base64 digest encoding — so
+ * we accept any (key-interpretation × digest-encoding) combination, compared
+ * timing-safely. If READAI_SIGNING_KEY is set, a valid signature is REQUIRED.
+ */
+function verifyReadaiSignature(req) {
+  const key = process.env.READAI_SIGNING_KEY;
+  if (!key) return true; // signature enforcement off until the key is configured
+  const header = String(req.headers['x-read-signature'] || '').trim();
+  if (!header || !req.rawBody) return false;
+  const provided = header.replace(/^sha256=/i, '');
+
+  const keyBuffers = [Buffer.from(key, 'utf8')];
+  if (/^[A-Za-z0-9+/]+=*$/.test(key)) keyBuffers.push(Buffer.from(key, 'base64'));
+
+  for (const keyBuf of keyBuffers) {
+    const digest = crypto.createHmac('sha256', keyBuf).update(req.rawBody).digest();
+    for (const encoded of [digest.toString('hex'), digest.toString('base64')]) {
+      const a = Buffer.from(provided);
+      const b = Buffer.from(encoded);
+      if (a.length === b.length && crypto.timingSafeEqual(a, b)) return true;
+    }
+  }
+  return false;
+}
+
 module.exports = function webhooksRoutes(dbPool) {
   const router = express.Router();
 
@@ -21,6 +49,10 @@ module.exports = function webhooksRoutes(dbPool) {
       given.length === expected.length &&
       crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
     if (!ok) return res.status(401).json({ error: 'Invalid webhook secret' });
+    if (!verifyReadaiSignature(req)) {
+      console.warn('🎙️ Read.ai webhook rejected: bad or missing X-Read-Signature');
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
 
     const payload = req.body || {};
     // ACK fast; embed/ingest in the background

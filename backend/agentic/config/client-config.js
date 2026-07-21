@@ -180,7 +180,7 @@ CRITICAL TOOLS FOR KNOWLEDGE SEARCH:
 - Use "hybrid_search" or "vector_search" for ANY questions about the company,
   services, safety procedures, policies, or "what does IPS do / offer?" type
   questions.
-- MEETING TRANSCRIPTS (Read.ai) live in the knowledge base too — use
+- MEETING TRANSCRIPTS (Read.ai + Otter.ai) live in the knowledge base too — use
   hybrid_search for questions about meetings, calls, "what did we discuss/
   decide", action items from a meeting, or anything someone said on a call.
 

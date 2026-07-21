@@ -658,7 +658,7 @@ Return ONLY JSON: {"goal": "...", "steps": [{"tool": "tool_name", "description":
     // AVAILABLE DATA — reflects what is actually wired today (Part 11).
     const dataLines = [
       'AVAILABLE DATA:',
-      '- query_operational_database → the AI platform Postgres. Contains meeting_transcripts (Read.ai meetings: title, dates, participants, summaries, action items, full transcript text).',
+      '- query_operational_database → the AI platform Postgres. Contains meeting_transcripts (Read.ai + Otter.ai meetings: title, dates, participants, summaries, action items, full transcript text, source column).',
     ];
     if (this.billingDbPool) {
       dataLines.push(

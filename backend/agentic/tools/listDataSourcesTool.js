@@ -93,8 +93,8 @@ Present the result as a SIMPLE, friendly list (source name — one-line descript
         .catch(() => ({ rows: [{ n: 0, latest: null }] }));
       if (meetings.rows[0].n > 0) {
         sources.push({
-          source: 'Meeting transcripts (Read.ai)',
-          what: 'Meeting recordings auto-ingested from Read.ai — summaries, action items, and full transcripts, searchable by meaning',
+          source: 'Meeting transcripts (Read.ai + Otter.ai)',
+          what: 'Meeting recordings from Read.ai (auto-ingested) and Otter.ai (backfilled) — summaries, action items, and full transcripts, searchable by meaning',
           meetings: meetings.rows[0].n,
           latest_meeting: meetings.rows[0].latest,
         });

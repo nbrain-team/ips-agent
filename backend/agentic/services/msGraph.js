@@ -185,10 +185,24 @@ async function syncMailbox(dbPool, mailbox) {
  * Full tenant sync: refresh mailbox list, then sync every enabled mailbox.
  * Never throws for per-mailbox errors — returns a summary.
  */
+let syncInFlight = false;
+
 async function syncAllMailboxes(dbPool) {
   if (!isConfigured()) {
     return { skipped: true, reason: 'MS_GRAPH_* env vars not set' };
   }
+  if (syncInFlight) {
+    return { skipped: true, reason: 'sync already in progress' };
+  }
+  syncInFlight = true;
+  try {
+    return await runFullSync(dbPool);
+  } finally {
+    syncInFlight = false;
+  }
+}
+
+async function runFullSync(dbPool) {
   const started = Date.now();
   const discovered = await upsertMailboxes(dbPool);
 

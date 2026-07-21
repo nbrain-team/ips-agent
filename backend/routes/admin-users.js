@@ -56,6 +56,10 @@ module.exports = function adminUsersRoutes(dbPool) {
     if (is_active !== undefined) { params.push(is_active); sets.push(`is_active = $${params.length}`); }
     if (name !== undefined) { params.push(name); sets.push(`name = $${params.length}`); }
     if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+    // Role change or deactivation must revoke the user's existing sessions.
+    if (role !== undefined || is_active === false) {
+      sets.push('token_version = token_version + 1');
+    }
     params.push(req.params.id);
     const result = await dbPool.query(
       `UPDATE users SET ${sets.join(', ')} WHERE id = $${params.length}
@@ -69,7 +73,9 @@ module.exports = function adminUsersRoutes(dbPool) {
     const newPassword = req.body?.password || crypto.randomBytes(9).toString('base64url');
     const hash = await bcrypt.hash(newPassword, 12);
     await dbPool.query(
-      'UPDATE users SET password_hash = $1, must_change_password = true WHERE id = $2',
+      `UPDATE users SET password_hash = $1, must_change_password = true,
+              token_version = token_version + 1
+       WHERE id = $2`,
       [hash, req.params.id]
     );
     res.json({ success: true, temp_password: newPassword });

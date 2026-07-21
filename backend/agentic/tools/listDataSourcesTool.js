@@ -79,12 +79,24 @@ Present the result as a SIMPLE, friendly list (source name — one-line descript
       }
 
       if (emails.rows[0].messages > 0) {
+        const attachments = await db
+          .query(`SELECT COUNT(*)::int AS n FROM ms_email_attachments WHERE text_content IS NOT NULL`)
+          .catch(() => ({ rows: [{ n: 0 }] }));
         sources.push({
           source: 'Microsoft 365 email',
-          what: 'Company email, synced every hour (last 30 days). Users see only their own mailbox; admins see all.',
+          what: 'Company email, synced every hour. Attachment documents (PDF/Word/Excel) are text-extracted and searchable too. Users see only their own mailbox; admins see all.',
           mailboxes: emails.rows[0].mailboxes,
           messages: emails.rows[0].messages,
+          searchable_attachments: attachments.rows[0].n,
           latest_message: emails.rows[0].latest,
+        });
+        sources.push({
+          source: 'Microsoft 365 calendar (live)',
+          what: 'Calendar events queried live from Microsoft 365 — "what is on my calendar this week?". Users see only their own calendar; admins can view others.',
+        });
+        sources.push({
+          source: 'OneDrive / SharePoint files (live)',
+          what: 'File search by name/content across OneDrive — returns links to open files. Users search their own drive; admins can search others.',
         });
       }
 

@@ -45,14 +45,17 @@ const dbPool = new Pool({
 });
 
 // Secondary read-only pool: existing IPS Billing platform (Part 11.1, Option B)
+// default_transaction_read_only=on makes read-only DB-enforced for every
+// connection in this pool, independent of the connection string's role.
 let billingDbPool = null;
 if (process.env.IPS_BILLING_DATABASE_URL) {
   billingDbPool = new Pool({
     connectionString: process.env.IPS_BILLING_DATABASE_URL,
     max: 10,
     ssl: process.env.IPS_BILLING_DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : false,
+    options: '-c default_transaction_read_only=on',
   });
-  console.log('💰 Billing DB pool configured (read-only)');
+  console.log('💰 Billing DB pool configured (read-only enforced)');
 }
 
 app.locals.dbPool = dbPool;
@@ -62,7 +65,23 @@ app.locals.billingDbPool = billingDbPool;
 // Global middleware
 // ---------------------------------------------------------------------------
 app.set('trust proxy', 1);
-app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+// API-only backend: a strict CSP is safe (no HTML pages served from here) and
+// protects any response a browser might render directly (errors, JSON views).
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'none'"],
+        connectSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:'],
+        frameAncestors: ["'none'"],
+        baseUri: ["'none'"],
+        formAction: ["'none'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  })
+);
 
 const allowedOrigins = [
   process.env.FRONTEND_URL,
@@ -96,6 +115,20 @@ app.use((req, _res, next) => {
   }
   next();
 });
+
+// Global API rate limit (per IP). Generous ceiling — per-user chat limits are
+// stricter and live in the chat routes; this stops brute force / scraping.
+const rateLimit = require('express-rate-limit');
+app.use(
+  '/api/',
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: parseInt(process.env.GLOBAL_RATE_LIMIT_MAX || '600', 10),
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.path.startsWith('/webhooks'),
+  })
+);
 
 // ---------------------------------------------------------------------------
 // Startup
@@ -139,6 +172,7 @@ async function start() {
   app.use('/api/output-templates', require('./routes/output-templates')(dbPool));
   app.use('/api/channels', require('./routes/channels/api')(dbPool, () => orchestrator));
   app.use('/api/webhooks', require('./routes/webhooks')(dbPool));
+  app.use('/api/admin/ops', require('./routes/admin-ops')(dbPool, billingDbPool));
 
   // Health check — run a real SELECT 1 so DB status is accurate
   app.get('/health', async (_req, res) => {
@@ -223,8 +257,12 @@ async function start() {
   const msGraphSvc = require('./agentic/services/msGraph');
   if (msGraphSvc.isConfigured()) {
     const intervalMin = parseInt(process.env.EMAIL_SYNC_INTERVAL_MIN || '60', 10);
+    const { recordFailure } = require('./agentic/services/ingestFailures');
     const runSync = () =>
-      msGraphSvc.syncAllMailboxes(dbPool).catch((err) => console.warn('Email sync failed:', err.message));
+      msGraphSvc.syncAllMailboxes(dbPool).catch((err) => {
+        console.warn('Email sync failed:', err.message);
+        recordFailure(dbPool, { source: 'email_sync', reference: 'tenant sync run', error: err.message });
+      });
     setTimeout(runSync, 15000); // first sync shortly after boot
     setInterval(runSync, intervalMin * 60000);
     console.log(`📧 M365 email sync scheduled every ${intervalMin} min`);
@@ -245,6 +283,58 @@ async function start() {
       console.warn('Table vectorization skipped:', err.message);
     }
   }, 5000);
+
+  // 8. Scheduled data-freshness jobs
+  //    - table re-profiling (schema drift, row counts, date ranges): daily
+  //    - website re-crawl (site content changes): weekly
+  const reprofileHours = parseInt(process.env.TABLE_REPROFILE_INTERVAL_H || '24', 10);
+  if (reprofileHours > 0) {
+    setInterval(async () => {
+      try {
+        console.log('🧠 Scheduled table re-profiling...');
+        const vec = new TableMetadataVectorization(dbPool);
+        await vec.vectorizeAllTables();
+        if (billingDbPool) {
+          const bvec = new TableMetadataVectorization(billingDbPool, { sourceTag: 'billing', metadataPool: dbPool });
+          await bvec.vectorizeAllTables();
+        }
+        console.log('🧠 Scheduled table re-profiling done');
+      } catch (err) {
+        console.warn('Scheduled re-profiling failed:', err.message);
+        require('./agentic/services/ingestFailures').recordFailure(dbPool, {
+          source: 'vectorize',
+          reference: 'scheduled re-profiling',
+          error: err.message,
+        });
+      }
+    }, reprofileHours * 3600000);
+    console.log(`🧠 Table re-profiling scheduled every ${reprofileHours}h`);
+  }
+
+  const crawlDays = parseInt(process.env.WEBSITE_RECRAWL_INTERVAL_DAYS || '7', 10);
+  if (crawlDays > 0) {
+    const { spawn } = require('child_process');
+    const runCrawl = () => {
+      console.log('🌐 Scheduled website re-crawl starting...');
+      const proc = spawn(process.execPath, [require('path').join(__dirname, 'scripts', 'crawl-website.js')], {
+        env: process.env,
+        stdio: ['ignore', 'inherit', 'inherit'],
+      });
+      proc.on('close', (code) => {
+        console.log(`🌐 Website re-crawl finished (exit ${code})`);
+        if (code !== 0) {
+          require('./agentic/services/ingestFailures').recordFailure(dbPool, {
+            source: 'website_crawl',
+            reference: 'scheduled re-crawl',
+            error: `crawl-website.js exited with code ${code}`,
+          });
+        }
+      });
+      proc.on('error', (err) => console.warn('Website re-crawl failed to start:', err.message));
+    };
+    setInterval(runCrawl, crawlDays * 86400000);
+    console.log(`🌐 Website re-crawl scheduled every ${crawlDays}d`);
+  }
 }
 
 // Graceful shutdown

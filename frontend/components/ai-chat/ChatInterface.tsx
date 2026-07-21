@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import {
   Send, Square, Paperclip, ThumbsUp, ThumbsDown, BookMarked,
   FileText, ImageIcon, X, PanelRight, RefreshCw,
+  Copy, Check, RotateCcw, Pencil, Download, Menu,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -68,6 +69,7 @@ export default function ChatInterface({
   setArtifacts,
   setActiveArtifactId,
   setArtifactPanelOpen,
+  onOpenHistory,
 }: {
   sessionId: number | null;
   onFirstMessage: () => void;
@@ -75,6 +77,7 @@ export default function ChatInterface({
   setArtifacts: React.Dispatch<React.SetStateAction<Artifact[]>>;
   setActiveArtifactId: (id: string) => void;
   setArtifactPanelOpen: (open: boolean) => void;
+  onOpenHistory?: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -89,6 +92,8 @@ export default function ChatInterface({
   const [feedbackText, setFeedbackText] = useState("");
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
   const [pendingRetryMessage, setPendingRetryMessage] = useState<string | null>(null);
+  const [copiedMessageIdx, setCopiedMessageIdx] = useState<number | null>(null);
+  const editRegenRef = useRef(false); // next send replaces the last user turn
 
   const abortRef = useRef<AbortController | null>(null);
   const parserRef = useRef(new StreamingArtifactParser());
@@ -161,9 +166,13 @@ export default function ChatInterface({
   // Send + stream
   // -------------------------------------------------------------------------
   const sendMessage = useCallback(
-    async (overrideText?: string) => {
+    async (overrideText?: string, opts?: { regenerate?: boolean; skipUserBubble?: boolean }) => {
       const text = (overrideText ?? input).trim();
       if ((!text && attachments.length === 0) || loading || !sessionId) return;
+
+      // Edit-and-resend arms this flag; consume it into the request options
+      const regenerate = opts?.regenerate || editRegenRef.current;
+      editRegenRef.current = false;
 
       setInput("");
       setRetryCountdown(null);
@@ -183,7 +192,9 @@ export default function ChatInterface({
         sentAttachments.length > 0
           ? `\n\n📎 ${sentAttachments.map((a) => a.filename).join(", ")}`
           : "";
-      setMessages((prev) => [...prev, { role: "user", content: text + attachmentNote }]);
+      if (!opts?.skipUserBubble) {
+        setMessages((prev) => [...prev, { role: "user", content: text + attachmentNote }]);
+      }
       setLoading(true);
       setStreamText("");
       setStreamPlan(null);
@@ -198,7 +209,7 @@ export default function ChatInterface({
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text, imageAttachments, documentAttachments }),
+          body: JSON.stringify({ message: text, imageAttachments, documentAttachments, regenerate }),
           signal: controller.signal,
         });
 
@@ -365,6 +376,61 @@ export default function ChatInterface({
   }
 
   // -------------------------------------------------------------------------
+  // Message actions: copy / regenerate / edit / export
+  // -------------------------------------------------------------------------
+  async function copyMessage(idx: number, content: string) {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMessageIdx(idx);
+      setTimeout(() => setCopiedMessageIdx(null), 1500);
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+
+  function regenerateLast() {
+    if (loading) return;
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    if (!lastUser) return;
+    const text = lastUser.content.split("\n\n📎")[0];
+    // Drop the trailing assistant reply; the user bubble stays
+    setMessages((prev) => {
+      const idx = prev.map((m) => m.role).lastIndexOf("assistant");
+      return idx >= 0 ? prev.slice(0, idx) : prev;
+    });
+    sendMessage(text, { regenerate: true, skipUserBubble: true });
+  }
+
+  function editLastUserMessage() {
+    if (loading) return;
+    const idx = messages.map((m) => m.role).lastIndexOf("user");
+    if (idx === -1) return;
+    const text = messages[idx].content.split("\n\n📎")[0];
+    setMessages((prev) => prev.slice(0, idx));
+    setInput(text);
+    editRegenRef.current = true; // the next send replaces the old turn server-side
+  }
+
+  function exportConversation() {
+    if (!messages.length) return;
+    const md = [
+      `# IPS AI Brain — Conversation Export`,
+      `_Exported ${new Date().toLocaleString()}_`,
+      "",
+      ...messages.map((m) =>
+        m.role === "user" ? `## You\n\n${m.content}` : `## IPS AI\n\n${m.content}`
+      ),
+    ].join("\n\n");
+    const blob = new Blob([md], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ips-chat-${sessionId || "export"}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // -------------------------------------------------------------------------
   // Uploads (picker + paste + drag)
   // -------------------------------------------------------------------------
   async function uploadFiles(files: FileList | File[]) {
@@ -455,6 +521,8 @@ export default function ChatInterface({
   );
 
   const emptyState = messages.length === 0 && !loading;
+  const lastAssistantIdx = messages.map((m) => m.role).lastIndexOf("assistant");
+  const lastUserIdx = messages.map((m) => m.role).lastIndexOf("user");
 
   // -------------------------------------------------------------------------
   return (
@@ -466,6 +534,32 @@ export default function ChatInterface({
         uploadFiles(e.dataTransfer.files);
       }}
     >
+      {/* Toolbar: mobile history + export */}
+      {(onOpenHistory || messages.length > 0) && (
+        <div className="flex items-center px-3 py-1 border-b border-ips-border bg-white shrink-0">
+          {onOpenHistory && (
+            <button
+              onClick={onOpenHistory}
+              className="md:hidden p-1.5 rounded text-ips-charcoal-600 hover:bg-ips-surface"
+              title="Chat history"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
+          )}
+          <div className="ml-auto">
+            {messages.length > 0 && (
+              <button
+                onClick={exportConversation}
+                className="p-1.5 rounded text-ips-charcoal-600 hover:bg-ips-surface"
+                title="Export conversation (.md)"
+              >
+                <Download className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto thin-scroll px-4 py-4">
         {emptyState && (
@@ -483,37 +577,66 @@ export default function ChatInterface({
           {messages.map((m, i) => (
             <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
               {m.role === "user" ? (
-                <div className="bg-ips-charcoal text-white rounded-2xl rounded-br-sm px-4 py-2.5 max-w-[85%] text-sm whitespace-pre-wrap">
-                  {m.content}
+                <div className="group flex items-end gap-1 max-w-[85%]">
+                  {i === lastUserIdx && !loading && (
+                    <button
+                      onClick={editLastUserMessage}
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-gray-400 hover:text-ips-steel transition-opacity shrink-0"
+                      title="Edit & resend"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  <div className="bg-ips-charcoal text-white rounded-2xl rounded-br-sm px-4 py-2.5 text-sm whitespace-pre-wrap">
+                    {m.content}
+                  </div>
                 </div>
               ) : (
                 <div className="max-w-full w-full">
                   {m.plan && <PlanDisplay plan={m.plan} />}
                   <div className="text-sm text-ips-charcoal">{renderContent(m.content)}</div>
                   <SourceCitation sources={m.sources || []} />
-                  {m.id && (
-                    <div className="flex items-center gap-1 mt-1.5">
+                  <div className="flex items-center gap-1 mt-1.5">
+                    <button
+                      onClick={() => copyMessage(i, m.content)}
+                      className={`p-1 rounded hover:bg-ips-surface ${copiedMessageIdx === i ? "text-green-600" : "text-gray-400"}`}
+                      title="Copy message"
+                    >
+                      {copiedMessageIdx === i ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                    </button>
+                    {i === lastAssistantIdx && !loading && (
                       <button
-                        onClick={() => sendFeedback(m.id!, "up")}
-                        className={`p-1 rounded hover:bg-ips-surface ${m.feedback === "up" ? "text-green-600" : "text-gray-400"}`}
-                        title="Good response"
+                        onClick={regenerateLast}
+                        className="p-1 rounded hover:bg-ips-surface text-gray-400 hover:text-ips-steel"
+                        title="Regenerate response"
                       >
-                        <ThumbsUp className="h-3.5 w-3.5" />
+                        <RotateCcw className="h-3.5 w-3.5" />
                       </button>
-                      <button
-                        onClick={() => setFeedbackFor(feedbackFor === m.id ? null : m.id!)}
-                        className={`p-1 rounded hover:bg-ips-surface ${m.feedback === "down" ? "text-ips-red" : "text-gray-400"}`}
-                        title="Needs work"
-                      >
-                        <ThumbsDown className="h-3.5 w-3.5" />
-                      </button>
-                      {typeof m.confidence === "number" && (
-                        <span className="text-[10px] text-gray-400 ml-1">
-                          {Math.round(m.confidence * 100)}% confidence
-                        </span>
-                      )}
-                    </div>
-                  )}
+                    )}
+                    {m.id && (
+                      <>
+                        <button
+                          onClick={() => sendFeedback(m.id!, "up")}
+                          className={`p-1 rounded hover:bg-ips-surface ${m.feedback === "up" ? "text-green-600" : "text-gray-400"}`}
+                          title="Good response"
+                        >
+                          <ThumbsUp className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setFeedbackFor(feedbackFor === m.id ? null : m.id!)}
+                          className={`p-1 rounded hover:bg-ips-surface ${m.feedback === "down" ? "text-ips-red" : "text-gray-400"}`}
+                          title="Needs work"
+                        >
+                          <ThumbsDown className="h-3.5 w-3.5" />
+                        </button>
+                        {typeof m.confidence === "number" && (
+                          <span className="text-[10px] text-gray-400 ml-1">
+                            {Math.round(m.confidence * 100)}% confidence
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
                   {feedbackFor === m.id && (
                     <div className="mt-2 border border-ips-border rounded-lg p-2.5 bg-ips-surface">
                       <p className="text-xs text-ips-charcoal-600 mb-1.5">

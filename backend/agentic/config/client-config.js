@@ -296,7 +296,10 @@ overall quality score (1-10), and a recommendation: APPROVE / REVISE / REJECT.`,
   // ==========================================================================
   TOOLS_CONFIG: {
     database: { max_query_time_ms: 30000, allowed_tables: null },
-    vector_search: { top_k: 10, min_similarity: 0.7 },
+    // min_similarity is cosine similarity over text-embedding-3-small — good
+    // matches typically land 0.4-0.6, so 0.35 filters noise without starving
+    // the agent of context.
+    vector_search: { top_k: 10, min_similarity: 0.35 },
     code_execution: { timeout_ms: 60000, max_memory_mb: 512 },
     video_processing: { max_file_size_mb: 500, max_duration_minutes: 30 },
     pdf_generation: { max_pages: 100 },
@@ -332,8 +335,8 @@ overall quality score (1-10), and a recommendation: APPROVE / REVISE / REJECT.`,
   },
 
   getAgentModules() {
-    // TODO: extend as IPS's specialized modules are authored.
-    return ['estimating_reviewer', 'qa_validator'];
+    // Routed automatically by the orchestrator's MODULE_TRIGGERS.
+    return ['estimating_reviewer', 'qa_validator', 'email_drafter', 'code_analyst'];
   },
 
   getToolConfig(toolName) {

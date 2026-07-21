@@ -78,7 +78,7 @@ export default function ArtifactPanel({
 function ArtifactRenderer({ artifact }: { artifact: Artifact }) {
   if (artifact.type === "html") return <HtmlFrame html={artifact.content} key={artifact.id + artifact.content.length} />;
   if (artifact.type === "svg")
-    return <div className="p-4 flex justify-center" dangerouslySetInnerHTML={{ __html: artifact.content }} />;
+    return <SvgFrame svg={artifact.content} key={artifact.id + artifact.content.length} />;
   if (artifact.type === "mermaid") return <MermaidFrame code={artifact.content} key={artifact.id + artifact.content.length} />;
   if (artifact.type === "chart") return <ChartFrame config={artifact.content} key={artifact.id + artifact.content.length} />;
   return (
@@ -110,6 +110,20 @@ function HtmlFrame({ html }: { html: string }) {
       className="w-full h-full min-h-[400px] border-0"
       title="HTML artifact"
     />
+  );
+}
+
+// SVG can carry <script>/onload handlers — render it inside a sandboxed
+// iframe (no allow-same-origin) instead of dangerouslySetInnerHTML.
+function SvgFrame({ svg }: { svg: string }) {
+  const doc = useMemo(
+    () => `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>body{margin:12px;display:flex;justify-content:center}svg{max-width:100%;height:auto}</style></head>
+<body>${svg}</body></html>`,
+    [svg]
+  );
+  return (
+    <iframe sandbox="" srcDoc={doc} className="w-full h-full min-h-[400px] border-0" title="SVG artifact" />
   );
 }
 

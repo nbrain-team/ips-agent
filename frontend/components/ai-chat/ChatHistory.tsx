@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Search, Trash2, Pencil, Archive, Folder, MessageSquare, Share2 } from "lucide-react";
+import { Plus, Search, Trash2, Pencil, Archive, Folder, FolderInput, MessageSquare, Share2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -29,6 +29,7 @@ export default function ChatHistory({
   const [search, setSearch] = useState("");
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [sharedCopiedId, setSharedCopiedId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     const params = search ? `?search=${encodeURIComponent(search)}` : "";
@@ -55,6 +56,42 @@ export default function ChatHistory({
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ is_archived: true }),
+    });
+    load();
+  }
+
+  // Share = mark the session visible to other logged-in IPS users and copy a
+  // direct link. Clicking again on a shared chat makes it private.
+  async function toggleShare(s: ChatSession, e: React.MouseEvent) {
+    e.stopPropagation();
+    const makeShared = s.visibility !== "shared";
+    await fetch(`/api/agent-chat/sessions/${s.id}`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ visibility: makeShared ? "shared" : "private" }),
+    });
+    if (makeShared) {
+      try {
+        await navigator.clipboard.writeText(`${window.location.origin}/ai-chat?session=${s.id}`);
+        setSharedCopiedId(s.id);
+        setTimeout(() => setSharedCopiedId(null), 2000);
+      } catch {
+        /* clipboard unavailable */
+      }
+    }
+    load();
+  }
+
+  async function moveToFolder(s: ChatSession, e: React.MouseEvent) {
+    e.stopPropagation();
+    const folder = window.prompt("Move to folder (leave empty to remove from folder):", s.folder || "");
+    if (folder === null) return;
+    await fetch(`/api/agent-chat/sessions/${s.id}`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folder: folder.trim() || null }),
     });
     load();
   }
@@ -140,6 +177,16 @@ export default function ChatHistory({
                     }}
                   >
                     <Pencil className="h-3 w-3" />
+                  </button>
+                  <button
+                    className="p-1 hover:text-ips-steel"
+                    title={s.visibility === "shared" ? "Stop sharing" : "Share with team (copies link)"}
+                    onClick={(e) => toggleShare(s, e)}
+                  >
+                    {sharedCopiedId === s.id ? <Check className="h-3 w-3 text-green-600" /> : <Share2 className="h-3 w-3" />}
+                  </button>
+                  <button className="p-1 hover:text-ips-steel" title="Move to folder" onClick={(e) => moveToFolder(s, e)}>
+                    <FolderInput className="h-3 w-3" />
                   </button>
                   <button className="p-1 hover:text-ips-steel" title="Archive" onClick={(e) => archiveSession(s.id, e)}>
                     <Archive className="h-3 w-3" />

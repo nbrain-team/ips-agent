@@ -9,7 +9,7 @@
 
 module.exports = {
   name: 'search_user_emails',
-  description: `Search the user's synced Microsoft 365 email (last ~30 days). Returns subject, sender, recipients, date, and body text.
+  description: `Search the user's synced Microsoft 365 email. Returns subject, sender, recipients, date, body text, and extracted attachment text (PDFs, Word, Excel).
 
 WHEN TO USE: any question about emails — "find the email from X", "what did Y say about the bid?", "summarize my emails today", "any emails about the Chevron job?".
 
@@ -32,7 +32,7 @@ If a non-admin asks about someone else's email, explain that only admins can do 
       },
       since_days: {
         type: 'number',
-        description: 'Look-back window in days (default 30, max 30).',
+        description: 'Look-back window in days (default 30, max 365 — everything ever synced stays searchable).',
       },
       mailbox: {
         type: 'string',
@@ -73,7 +73,9 @@ If a non-admin asks about someone else's email, explain that only admins can do 
         where.push(`mailbox_email = $${args.length}`);
       }
 
-      const sinceDays = Math.min(Math.max(1, params.since_days || 30), 30);
+      // Retention decision: synced mail stays searchable (no pruning) — the
+      // window just defaults to 30d and can widen to a year on request.
+      const sinceDays = Math.min(Math.max(1, params.since_days || 30), 365);
       args.push(String(sinceDays));
       where.push(`received_at > NOW() - ($${args.length} || ' days')::interval`);
 
@@ -87,7 +89,11 @@ If a non-admin asks about someone else's email, explain that only admins can do 
         args.push(params.query.trim());
         rankSelect = `ts_rank(fts, plainto_tsquery('english', $${args.length})) AS rank`;
         where.push(
-          `(fts @@ plainto_tsquery('english', $${args.length}) OR subject ILIKE '%' || $${args.length} || '%')`
+          `(fts @@ plainto_tsquery('english', $${args.length}) OR subject ILIKE '%' || $${args.length} || '%'
+            OR e.ms_message_id IN (
+              SELECT ms_message_id FROM ms_email_attachments
+              WHERE to_tsvector('english', COALESCE(filename, '') || ' ' || COALESCE(text_content, ''))
+                    @@ plainto_tsquery('english', $${args.length})))`
         );
       }
 
@@ -95,14 +101,34 @@ If a non-admin asks about someone else's email, explain that only admins can do 
       args.push(limit);
 
       const sql = `
-        SELECT mailbox_email, subject, from_name, from_address, to_addresses,
-               received_at, has_attachments, body_text, web_link, ${rankSelect}
-        FROM ms_emails
+        SELECT e.ms_message_id, e.mailbox_email, e.subject, e.from_name, e.from_address, e.to_addresses,
+               e.received_at, e.has_attachments, e.body_text, e.web_link, ${rankSelect}
+        FROM ms_emails e
         WHERE ${where.join(' AND ')}
         ORDER BY ${params.query ? 'rank DESC,' : ''} received_at DESC
         LIMIT $${args.length}`;
 
       const result = await context.dbPool.query(sql, args);
+
+      // Pull extracted attachment text for the returned messages (best-effort)
+      const attachmentsByMessage = {};
+      const withAttachments = result.rows.filter((r) => r.has_attachments).map((r) => r.ms_message_id);
+      if (withAttachments.length) {
+        try {
+          const att = await context.dbPool.query(
+            `SELECT ms_message_id, filename, text_content FROM ms_email_attachments
+             WHERE ms_message_id = ANY($1) AND text_content IS NOT NULL`,
+            [withAttachments]
+          );
+          for (const a of att.rows) {
+            (attachmentsByMessage[a.ms_message_id] ||= []).push({
+              filename: a.filename,
+              text: String(a.text_content || '').slice(0, 3000),
+            });
+          }
+        } catch (_e) { /* table may not exist yet */ }
+      }
+
       const rows = result.rows.map((r) => ({
         mailbox: r.mailbox_email,
         subject: r.subject,
@@ -110,6 +136,7 @@ If a non-admin asks about someone else's email, explain that only admins can do 
         to: (r.to_addresses || []).join(', '),
         received: r.received_at,
         attachments: r.has_attachments,
+        attachment_contents: attachmentsByMessage[r.ms_message_id] || undefined,
         body: String(r.body_text || '').slice(0, 1500),
         link: r.web_link,
       }));

@@ -19,7 +19,7 @@ const EXCLUDED_TABLES = [
   'agent_memories', 'agent_traces', 'agent_chat_shares', 'agent_output_templates',
   'website_content', 'schema_migrations', 'pg_stat_statements',
   // Email tables are permission-scoped — ONLY reachable via search_user_emails
-  'ms_emails', 'ms_mailboxes',
+  'ms_emails', 'ms_mailboxes', 'ms_email_attachments',
   // Billing-platform infra/auth tables
   'activity_log', 'user_audit_log', 'user_customer_access', 'user_roles',
   'gps_backfill_log',

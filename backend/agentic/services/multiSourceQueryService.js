@@ -15,8 +15,12 @@ const { EXCLUDED_TABLES, splitQualified } = require('./TableMetadataVectorizatio
 const { llmHttpsAgent } = require('../utils/httpAgent');
 const { withRetry, sanitizeAnthropicParams } = require('../utils/anthropicRetry');
 
-const FORBIDDEN_SQL = /\b(DROP|DELETE|UPDATE|INSERT|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|COPY|VACUUM|COMMENT|EXECUTE|DO)\b/i;
-const MAX_ROWS = 100;
+const FORBIDDEN_SQL =
+  /\b(DROP|DELETE|UPDATE|INSERT|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|COPY|VACUUM|COMMENT|EXECUTE|DO|CALL|MERGE|LOCK|LISTEN|NOTIFY|REFRESH|REINDEX|CLUSTER|CHECKPOINT|SECURITY|PREPARE|DEALLOCATE|DECLARE|RESET|SHOW)\b/i;
+// Dangerous server-side functions that work even inside a SELECT
+const FORBIDDEN_FUNCTIONS =
+  /\b(pg_read_file|pg_read_binary_file|pg_ls_dir|pg_stat_file|pg_logdir_ls|lo_import|lo_export|dblink|dblink_exec|pg_sleep|pg_terminate_backend|pg_cancel_backend|pg_reload_conf|pg_rotate_logfile|copy_from|current_setting\s*\(\s*'[^']*password)/i;
+const MAX_ROWS = 250;
 
 class MultiSourceQueryService {
   /**
@@ -122,6 +126,9 @@ QUESTION: ${question}`;
     if (FORBIDDEN_SQL.test(clean)) {
       throw new Error('Generated SQL contains a forbidden keyword — rejected');
     }
+    if (FORBIDDEN_FUNCTIONS.test(clean)) {
+      throw new Error('Generated SQL calls a forbidden function — rejected');
+    }
     if (clean.split(';').filter((s) => s.trim()).length > 1) {
       throw new Error('Multiple statements are not allowed');
     }
@@ -129,11 +136,18 @@ QUESTION: ${question}`;
   }
 
   async executeQuery(sql) {
+    // Defense in depth: run inside a READ ONLY transaction so even SQL that
+    // slips past the denylist cannot write, regardless of the pool's DB role.
     const client = await this.dataPool.connect();
     try {
-      await client.query('SET statement_timeout = 30000');
+      await client.query('BEGIN TRANSACTION READ ONLY');
+      await client.query('SET LOCAL statement_timeout = 30000');
       const res = await client.query(sql);
+      await client.query('COMMIT');
       return res.rows.slice(0, MAX_ROWS);
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch (_e) { /* ignore */ }
+      throw err;
     } finally {
       client.release();
     }

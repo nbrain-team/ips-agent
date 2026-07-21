@@ -41,3 +41,27 @@ body {
 .thin-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
 .thin-scroll::-webkit-scrollbar-thumb { @apply bg-ips-border rounded; }
 .thin-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------------------------------------------------------------------------
+   Dark mode — utility remaps so every surface follows the toggle without
+   per-component dark: churn. The .dark class lives on <html>.
+--------------------------------------------------------------------------- */
+.dark { color-scheme: dark; }
+.dark body { background-color: #121316; color: #e8e8ea; }
+.dark .bg-white { background-color: #17181b; }
+.dark .bg-ips-surface { background-color: #212226; }
+.dark .border-ips-border { border-color: #34363c; }
+.dark .text-ips-charcoal { color: #e8e8ea; }
+.dark .text-ips-charcoal-600 { color: #a5a7ad; }
+.dark .hover\:bg-ips-surface:hover { background-color: #2a2b30; }
+.dark .hover\:bg-ips-border:hover { background-color: #3a3c42; }
+.dark .bg-ips-steel-soft { background-color: #2b3050; }
+.dark .text-ips-steel { color: #9aa7e0; }
+.dark .bg-ips-red-soft { background-color: rgba(236, 28, 36, 0.16); }
+.dark .text-ips-red-dark { color: #ff777d; }
+.dark .text-gray-400 { color: #83868e; }
+.dark .bg-amber-50 { background-color: #2e2410; }
+.dark .thin-scroll::-webkit-scrollbar-thumb { background-color: #3a3c42; }
+.dark .chat-markdown code { background-color: #26272c; }
+.dark .chat-markdown th { background-color: #212226; }
+/* Keep the charcoal brand bar / user bubble legible in dark mode as-is */

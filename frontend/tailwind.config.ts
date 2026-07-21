@@ -7,6 +7,7 @@ import type { Config } from "tailwindcss";
  * Font: "Kumbh Sans" (site-wide).
  */
 const config: Config = {
+  darkMode: "class",
   content: [
     "./app/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",

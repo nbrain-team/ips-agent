@@ -26,6 +26,7 @@ Examples: "what hydro excavation services does IPS offer?", "what is our safety 
       const cfg = clientConfig.getToolConfig('vector_search');
       const results = await vectorSearch(context.dbPool, params.query, {
         topK: params.top_k || cfg.top_k || 10,
+        minSimilarity: cfg.min_similarity ?? 0.3,
       });
       return {
         success: true,
@@ -34,7 +35,7 @@ Examples: "what hydro excavation services does IPS offer?", "what is our safety 
           url: r.url,
           category: r.category,
           similarity: Number(r.similarity).toFixed(2),
-          content: String(r.content).slice(0, 2000),
+          content: String(r.content).slice(0, 4000),
         })),
         summary: `${results.length} knowledge-base match(es)`,
         confidence: results.length ? Math.min(0.95, Number(results[0].similarity)) : 0.2,

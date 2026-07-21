@@ -20,4 +20,7 @@ module.exports = {
   deepResearchEnabled: () => flag('FEATURE_DEEP_RESEARCH', true),
   validatorsEnabled: () => flag('FEATURE_OUTPUT_VALIDATORS', true),
   traceEnabled: () => flag('FEATURE_AGENT_TRACE', true),
+  feedbackLearningEnabled: () => flag('FEATURE_FEEDBACK_LEARNING', true),
+  selfCorrectionEnabled: () => flag('FEATURE_SELF_CORRECTION', true),
+  conversationSummaryEnabled: () => flag('FEATURE_CONVERSATION_SUMMARY', true),
 };

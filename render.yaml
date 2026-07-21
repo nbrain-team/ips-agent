@@ -75,8 +75,10 @@ services:
       - key: FEATURE_AGENT_TRACE
         value: true
       # Capability flags
+      # Code exec runs python3 on the host (not a real sandbox) — keep OFF in
+      # prod until it is moved to an isolated runtime.
       - key: FEATURE_CODE_EXEC
-        value: true
+        value: false
       - key: FEATURE_VOICE
         value: false
       - key: FEATURE_VIDEO

@@ -9,6 +9,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { ingestMeeting } = require('../agentic/services/readaiIngest');
+const { recordFailure } = require('../agentic/services/ingestFailures');
 
 /**
  * Read.ai signs webhooks: HMAC-SHA256 over the RAW request body, delivered in
@@ -79,9 +80,14 @@ module.exports = function webhooksRoutes(dbPool) {
       return;
     }
 
-    ingestMeeting(dbPool, payload).catch((err) =>
-      console.error('Read.ai ingest failed:', err.message)
-    );
+    ingestMeeting(dbPool, payload).catch((err) => {
+      console.error('Read.ai ingest failed:', err.message);
+      recordFailure(dbPool, {
+        source: 'readai',
+        reference: payload?.session_title || payload?.title || payload?.session_id || 'unknown meeting',
+        error: err.message,
+      });
+    });
   });
 
   return router;

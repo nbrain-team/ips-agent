@@ -15,8 +15,14 @@
 
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 const SYNC_DAYS = parseInt(process.env.EMAIL_SYNC_DAYS || '30', 10);
-const MAX_PAGES_PER_MAILBOX = parseInt(process.env.MS_SYNC_MAX_PAGES || '20', 10); // x50 msgs
+// Incremental syncs only need a few pages; the FIRST sync of a mailbox gets a
+// much higher cap so busy inboxes fully backfill their window (x50 msgs/page).
+const MAX_PAGES_PER_MAILBOX = parseInt(process.env.MS_SYNC_MAX_PAGES || '20', 10);
+const MAX_PAGES_INITIAL = parseInt(process.env.MS_SYNC_MAX_PAGES_INITIAL || '80', 10);
 const BODY_CHAR_CAP = 20000;
+const ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024; // skip anything larger
+const ATTACHMENT_TEXT_CAP = 60000;
+const EXTRACTABLE_EXT = /\.(pdf|docx?|xlsx?|pptx|csv|txt|md|json|html?)$/i;
 
 function isConfigured() {
   return !!(
@@ -126,10 +132,57 @@ function addressList(recipients) {
     .filter(Boolean);
 }
 
+/**
+ * Fetch a message's file attachments, extract text from supported document
+ * types, and store them. Best-effort: extraction errors are recorded per
+ * attachment and never fail the message sync.
+ */
+async function syncAttachments(dbPool, token, msUserId, message) {
+  const { extractText } = require('./documentProcessor');
+  let data;
+  try {
+    data = await graphGet(
+      `${GRAPH}/users/${msUserId}/messages/${message.id}/attachments?$top=10`,
+      token
+    );
+  } catch (_e) {
+    return 0; // attachment listing denied/failed — skip quietly
+  }
+  let saved = 0;
+  for (const att of data.value || []) {
+    if (att['@odata.type'] !== '#microsoft.graph.fileAttachment') continue;
+    if (!att.contentBytes) continue;
+    if ((att.size || 0) > ATTACHMENT_MAX_BYTES) continue;
+    const filename = att.name || 'attachment';
+    let text = null;
+    let extractError = null;
+    if (EXTRACTABLE_EXT.test(filename)) {
+      try {
+        const buffer = Buffer.from(att.contentBytes, 'base64');
+        text = String(await extractText(buffer, filename, att.contentType || '')).slice(0, ATTACHMENT_TEXT_CAP);
+      } catch (err) {
+        extractError = String(err.message).slice(0, 300);
+      }
+    }
+    try {
+      const result = await dbPool.query(
+        `INSERT INTO ms_email_attachments
+           (ms_message_id, ms_attachment_id, filename, content_type, size_bytes, text_content, extract_error)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (ms_message_id, ms_attachment_id) DO NOTHING`,
+        [message.id, att.id, filename.slice(0, 500), att.contentType || null, att.size || null, text, extractError]
+      );
+      saved += result.rowCount;
+    } catch (_e) { /* per-attachment best-effort */ }
+  }
+  return saved;
+}
+
 async function syncMailbox(dbPool, mailbox) {
   const token = await getAppToken();
 
   // Incremental: overlap 1 day past last sync; initial: full window
+  const isInitial = !mailbox.last_synced_at;
   let since = new Date(Date.now() - SYNC_DAYS * 86400000);
   if (mailbox.last_synced_at) {
     const overlap = new Date(new Date(mailbox.last_synced_at).getTime() - 86400000);
@@ -145,7 +198,8 @@ async function syncMailbox(dbPool, mailbox) {
 
   let saved = 0;
   let pages = 0;
-  while (url && pages < MAX_PAGES_PER_MAILBOX) {
+  const pageCap = isInitial ? MAX_PAGES_INITIAL : MAX_PAGES_PER_MAILBOX;
+  while (url && pages < pageCap) {
     pages++;
     const data = await graphGet(url, token, { Prefer: 'outlook.body-content-type="text"' });
     for (const m of data.value || []) {
@@ -175,6 +229,12 @@ async function syncMailbox(dbPool, mailbox) {
         ]
       );
       saved += result.rowCount;
+      // Only fetch attachments for newly inserted messages (rowCount > 0 on
+      // insert; conflict-update also reports 1, so guard with an EXISTS check
+      // being unnecessary — the attachment insert is idempotent anyway).
+      if (m.hasAttachments) {
+        await syncAttachments(dbPool, token, mailbox.ms_user_id, m).catch(() => {});
+      }
     }
     url = data['@odata.nextLink'] || null;
   }

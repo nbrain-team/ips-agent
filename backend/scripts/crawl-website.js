@@ -90,7 +90,20 @@ async function main() {
       const hash = crypto.createHash('md5').update(content).digest('hex');
 
       try {
+        // Skip unchanged pages (same hash) without paying for an embedding
+        const existing = await pool.query(
+          `SELECT 1 FROM website_content WHERE content_hash = $1 LIMIT 1`,
+          [hash]
+        );
+        if (existing.rows.length) continue;
+
         const embedding = await embedText(`${title}\n\n${content}`);
+        // Replace stale versions of this page so re-crawls don't accumulate
+        // duplicate near-identical rows per URL.
+        await pool.query(
+          `DELETE FROM website_content WHERE source = 'website' AND url = $1`,
+          [url]
+        );
         await pool.query(
           `INSERT INTO website_content (url, title, content, category, source, embedding, content_hash)
            VALUES ($1, $2, $3, 'company_information', 'website', $4::vector, $5)

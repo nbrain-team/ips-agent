@@ -28,7 +28,11 @@ module.exports = function authRoutes(dbPool) {
     if (!user || !user.is_active || !(await bcrypt.compare(password, user.password_hash))) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
-    const token = jwt.sign({ sub: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign(
+      { sub: user.id, role: user.role, tv: user.token_version || 0 },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
     res.cookie('session', token, COOKIE_OPTS);
     res.json({
       user: {
@@ -57,10 +61,20 @@ module.exports = function authRoutes(dbPool) {
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
     const hash = await bcrypt.hash(new_password, 12);
-    await dbPool.query(
-      'UPDATE users SET password_hash = $1, must_change_password = false WHERE id = $2',
+    // Bump token_version so every OTHER existing session is revoked, then
+    // re-issue a fresh cookie for this session so the user stays logged in.
+    const updated = await dbPool.query(
+      `UPDATE users SET password_hash = $1, must_change_password = false,
+              token_version = token_version + 1
+       WHERE id = $2 RETURNING token_version, role`,
       [hash, req.user.id]
     );
+    const token = jwt.sign(
+      { sub: req.user.id, role: updated.rows[0].role, tv: updated.rows[0].token_version },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    res.cookie('session', token, COOKIE_OPTS);
     res.json({ success: true });
   });
 

@@ -15,14 +15,21 @@ function shouldTrigger(message) {
   return TRIGGERS.some((t) => m.includes(t));
 }
 
-async function decompose(modelRouter, question) {
+async function decompose(modelRouter, question, conversationHistory = []) {
+  const historyBlock = (conversationHistory || [])
+    .slice(-6)
+    .filter((m) => m.content)
+    .map((m) => `${m.role}: ${String(m.content).slice(0, 600)}`)
+    .join('\n');
   const { text } = await modelRouter.generateText({
     taskType: 'analysis',
     maxTokens: 1000,
     temperature: 0.3,
     system:
-      'Decompose the research question into 2-5 focused sub-questions that can each be answered with database queries or knowledge-base searches. Return ONLY a JSON array of strings.',
-    prompt: question,
+      'Decompose the research question into 2-5 focused sub-questions that can each be answered with database queries or knowledge-base searches. Resolve references like "that" or "those" from the conversation context if provided. Return ONLY a JSON array of strings.',
+    prompt: historyBlock
+      ? `CONVERSATION CONTEXT:\n${historyBlock}\n\nRESEARCH QUESTION: ${question}`
+      : question,
   });
   const match = text.match(/\[[\s\S]*\]/);
   if (!match) return [question];

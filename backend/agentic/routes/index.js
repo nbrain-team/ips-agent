@@ -79,6 +79,58 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
     return title;
   }
 
+  /**
+   * Rolling conversation summary: when a session outgrows the 20-message
+   * window, summarize everything older than the last 16 messages into
+   * agent_chat_sessions.summary. Incremental (folds the previous summary in),
+   * async/best-effort — never blocks a chat turn.
+   */
+  async function maybeUpdateSummary(sessionId) {
+    const counts = await dbPool.query(
+      `SELECT COUNT(*)::int AS n FROM agent_chat_messages WHERE session_id = $1`,
+      [sessionId]
+    );
+    if (counts.rows[0].n <= 20) return;
+
+    const session = await dbPool.query(
+      `SELECT summary, summary_thru_message_id FROM agent_chat_sessions WHERE id = $1`,
+      [sessionId]
+    );
+    const { summary: prevSummary, summary_thru_message_id: thruId } = session.rows[0] || {};
+
+    // Messages that should be part of the summary: everything except the most
+    // recent 16 (those stay in the live window).
+    const older = await dbPool.query(
+      `SELECT id, role, content FROM agent_chat_messages
+       WHERE session_id = $1 AND id NOT IN (
+         SELECT id FROM agent_chat_messages WHERE session_id = $1 ORDER BY created_at DESC, id DESC LIMIT 16
+       )
+       AND ($2::int IS NULL OR id > $2)
+       ORDER BY created_at ASC, id ASC LIMIT 40`,
+      [sessionId, thruId || null]
+    );
+    if (!older.rows.length) return;
+
+    const block = older.rows
+      .map((m) => `${m.role}: ${String(m.content).slice(0, 1200)}`)
+      .join('\n');
+    const orchestrator = getOrchestrator();
+    const { text } = await orchestrator.modelRouter.generateText({
+      taskType: 'summarization',
+      maxTokens: 900,
+      temperature: 0.2,
+      system:
+        'You maintain a rolling summary of a work conversation. Merge the previous summary (if any) with the new messages into ONE updated summary. Preserve: decisions made, data findings and key numbers, open questions, user preferences/instructions, and topics discussed. Be dense and factual. Max ~350 words.',
+      prompt: `${prevSummary ? `PREVIOUS SUMMARY:\n${prevSummary}\n\n` : ''}NEW MESSAGES:\n${block}`,
+    });
+    if (!text?.trim()) return;
+    const lastId = older.rows[older.rows.length - 1].id;
+    await dbPool.query(
+      `UPDATE agent_chat_sessions SET summary = $1, summary_thru_message_id = $2 WHERE id = $3`,
+      [text.trim().slice(0, 8000), lastId, sessionId]
+    );
+  }
+
   // ==========================================================================
   // Sessions
   // ==========================================================================
@@ -173,8 +225,9 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
   // Messaging — SSE streaming (protocol table in Part 5.10)
   // ==========================================================================
   router.post('/sessions/:id/message', requireAuth, async (req, res) => {
-    const { message, imageAttachments, documentAttachments } = req.body || {};
-    if (!message && !imageAttachments?.length && !documentAttachments?.length) {
+    const { imageAttachments, documentAttachments, regenerate } = req.body || {};
+    let { message } = req.body || {};
+    if (!message && !regenerate && !imageAttachments?.length && !documentAttachments?.length) {
       return res.status(400).json({ error: 'Message or attachments required' });
     }
     if (chatRateLimited(req.user.id)) {
@@ -182,10 +235,27 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
     }
 
     const sessionCheck = await dbPool.query(
-      `SELECT id FROM agent_chat_sessions WHERE id = $1 AND user_id = $2`,
+      `SELECT id, summary FROM agent_chat_sessions WHERE id = $1 AND user_id = $2`,
       [req.params.id, req.user.id]
     );
     if (!sessionCheck.rows.length) return res.status(404).json({ error: 'Session not found' });
+
+    // Regenerate / edit-and-resend: drop the last user message and everything
+    // after it, then re-process (the turn re-inserts a fresh user message).
+    if (regenerate) {
+      const lastUser = await dbPool.query(
+        `SELECT id, content FROM agent_chat_messages
+         WHERE session_id = $1 AND role = 'user'
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [req.params.id]
+      );
+      if (!lastUser.rows.length) return res.status(400).json({ error: 'Nothing to regenerate' });
+      if (!message) message = lastUser.rows[0].content;
+      await dbPool.query(
+        `DELETE FROM agent_chat_messages WHERE session_id = $1 AND id >= $2`,
+        [req.params.id, lastUser.rows[0].id]
+      );
+    }
 
     // SSE headers
     res.writeHead(200, {
@@ -202,6 +272,11 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
       } catch (_e) { /* client gone */ }
     };
 
+    // Server-side stop: when the client disconnects (stop button / closed
+    // tab), the orchestrator halts between turns instead of burning tokens.
+    let clientGone = false;
+    res.on('close', () => { clientGone = true; });
+
     // 15s heartbeat so proxies don't drop long runs (Part 14)
     const heartbeat = setInterval(() => {
       try {
@@ -210,9 +285,9 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
     }, 15000);
 
     try {
-      // Conversation history for context
+      // Conversation history for context (with retained structured results)
       const history = await dbPool.query(
-        `SELECT role, content FROM agent_chat_messages WHERE session_id = $1 ORDER BY created_at DESC, id DESC LIMIT 20`,
+        `SELECT role, content, structured_results FROM agent_chat_messages WHERE session_id = $1 ORDER BY created_at DESC, id DESC LIMIT 20`,
         [req.params.id]
       );
 
@@ -220,10 +295,12 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
       const result = await orchestrator.processQuery({
         userMessage: message || '',
         conversationHistory: history.rows.reverse(),
+        conversationSummary: sessionCheck.rows[0].summary || null,
         sessionId: parseInt(req.params.id, 10),
         userId: req.user.id,
         user: req.user,
         streamCallback,
+        isCancelled: () => clientGone,
         imageAttachments: imageAttachments || [],
         documentAttachments: documentAttachments || [],
       });
@@ -234,6 +311,8 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
           if (title) streamCallback({ type: 'session_title', data: { title } });
         } catch (_e) { /* titling is best-effort */ }
         streamCallback({ type: 'complete', data: result });
+        // Refresh the rolling summary in the background (never blocks)
+        maybeUpdateSummary(parseInt(req.params.id, 10)).catch(() => {});
       }
       // (error events are emitted inside processQuery)
     } catch (err) {
@@ -334,6 +413,15 @@ Organize with clear headings. Be thorough — this will onboard my new AI assist
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
       [req.params.id, req.user.id, rating, categories || [], feedback_text || null, training_instruction || null]
     );
+    // A training instruction is an explicit preference — remember it for THIS
+    // user immediately (personal memory; global guidance still needs approval).
+    const instruction = training_instruction || (rating === 'down' ? feedback_text : null);
+    if (instruction) {
+      const orchestrator = getOrchestrator();
+      orchestrator.memory
+        .extract(req.user.id, `Feedback on your answer (${rating}): ${instruction}`, '(user feedback — treat as a standing preference)')
+        .catch(() => {});
+    }
     res.json({ success: true, feedbackId: result.rows[0].id });
   });
 
@@ -342,7 +430,25 @@ Organize with clear headings. Be thorough — this will onboard my new AI assist
       `UPDATE agent_feedback SET approval_status = 'approved', approved_by = $1 WHERE id = $2`,
       [req.user.id, req.params.id]
     );
+    // Bust the orchestrator's feedback-guidance cache so it applies now
+    try { getOrchestrator()._feedbackCache = { at: 0, text: '' }; } catch (_e) { /* ignore */ }
     res.json({ success: true });
+  });
+
+  // Pending feedback queue (admin) — powers the approval workflow
+  router.get('/feedback/pending', requireAdmin, async (_req, res) => {
+    const result = await dbPool.query(
+      `SELECT f.id, f.rating, f.categories, f.feedback_text, f.training_instruction,
+              f.approval_status, f.created_at, u.email AS user_email,
+              m.content AS message_content
+       FROM agent_feedback f
+       LEFT JOIN users u ON u.id = f.user_id
+       LEFT JOIN agent_chat_messages m ON m.id = f.message_id
+       WHERE f.approval_status = 'pending'
+         AND COALESCE(NULLIF(f.training_instruction, ''), f.feedback_text) IS NOT NULL
+       ORDER BY f.created_at DESC LIMIT 100`
+    );
+    res.json(result.rows.map((r) => ({ ...r, message_content: String(r.message_content || '').slice(0, 500) })));
   });
 
   // ==========================================================================

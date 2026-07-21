@@ -31,12 +31,21 @@ const MAX_CONSECUTIVE_EMPTY = 3;
 const TOOL_LOOP_COOLDOWN_MS = 1500;
 const HARD_TOKEN_CAP = 32000;
 
+// NOTE: "send email" / "schedule meeting" triggers were removed — no such
+// tools exist (no Graph Mail.Send / calendar-write permissions). Those
+// requests now flow through TOOL_USE mode, where the agent drafts content.
 const PLAN_TRIGGERS = [
-  /\bsend (an |a )?email\b/i,
   /\bcreate (a |an )?(document|doc|proposal|sow|report)\b/i,
   /\bgenerate (a |an )?pdf\b/i,
   /\bcreate (a |an )?task\b/i,
-  /\bschedule (a |an )?meeting\b/i,
+];
+
+// Specialized agent modules (client-config SYSTEM_PROMPTS) routed by intent.
+const MODULE_TRIGGERS = [
+  { module: 'estimating_reviewer', pattern: /\b(bid|estimate|estimating|rfp|proposal review|review (this|the|our) (bid|proposal|sow|scope)|scope of work)\b/i },
+  { module: 'qa_validator', pattern: /\b(validate|qa check|quality check|review (this|the) (content|draft|report|answer)|double-?check (this|the))\b/i },
+  { module: 'email_drafter', pattern: /\b(draft|write|compose)( me)?( an?| the)? (email|reply|response to .{0,40}email)\b/i },
+  { module: 'code_analyst', pattern: /\b(python|write (a )?script|analyze .{0,30}(csv|spreadsheet|data file))\b/i },
 ];
 
 class AgenticOrchestrator {
@@ -52,6 +61,7 @@ class AgenticOrchestrator {
       maxRetries: 0,
     });
     this.model = clientConfig.AI_MODEL.primary;
+    this._feedbackCache = { at: 0, text: '' }; // approved-feedback guidance, cached
 
     // Class-based tools get instantiated here and registered like object tools
     const smartDb = new SmartDatabaseTool(dbPool);
@@ -87,6 +97,8 @@ Provide a natural-language query; table discovery and SQL generation are automat
     streamCallback = () => {},
     imageAttachments = [],
     documentAttachments = [],
+    conversationSummary = null, // rolling summary of turns older than the window
+    isCancelled = () => false,  // server-side stop (client disconnected)
   }) {
     const startedAt = Date.now();
 
@@ -97,13 +109,16 @@ Provide a natural-language query; table discovery and SQL generation are automat
     // 2. Output guidance (global + per-user output templates)
     const outputGuidance = await this.getOutputGuidance(userId).catch(() => '');
 
+    // 3. Specialized agent module routing (estimating / QA / email / code)
+    const agentModule = this.detectAgentModule(userMessage);
+
     const context = {
       userMessage, conversationHistory, sessionId, userId, user, clientId, projectId,
       streamCallback, imageAttachments, documentAttachments,
-      analysis, outputGuidance, startedAt,
+      analysis, outputGuidance, startedAt, conversationSummary, agentModule, isCancelled,
     };
 
-    // 3. Route
+    // 4. Route
     try {
       if (this.isLegacyPlanQuery(userMessage)) {
         return await this.processWithPlan(context);
@@ -134,6 +149,15 @@ Provide a natural-language query; table discovery and SQL generation are automat
     return PLAN_TRIGGERS.some((p) => p.test(String(message)));
   }
 
+  /** Match the message against specialized module triggers (first hit wins). */
+  detectAgentModule(message) {
+    const m = String(message || '');
+    for (const { module, pattern } of MODULE_TRIGGERS) {
+      if (pattern.test(m)) return module;
+    }
+    return null;
+  }
+
   // ==========================================================================
   // TOOL_USE mode — the workhorse
   // ==========================================================================
@@ -149,15 +173,43 @@ Provide a natural-language query; table discovery and SQL generation are automat
       memories = await this.memory.recall(userId, userMessage);
     }
 
-    const systemPrompt = this.buildToolUseSystemPrompt({ memories, outputGuidance: ctx.outputGuidance });
+    // Approved feedback → standing guidance (flag-gated, cached, best-effort)
+    let feedbackGuidance = '';
+    if (agentFlags.feedbackLearningEnabled()) {
+      feedbackGuidance = await this.getFeedbackGuidance().catch(() => '');
+    }
+
+    const systemPrompt = this.buildToolUseSystemPrompt({
+      memories,
+      outputGuidance: ctx.outputGuidance,
+      feedbackGuidance,
+      conversationSummary: ctx.conversationSummary,
+      agentModule: ctx.agentModule,
+    });
     const tools = this.toolRegistry.getToolSchemas();
     const maxTokens = Math.min(analysis.token_allocation, HARD_TOKEN_CAP);
 
-    // Build message list: history + current message (with vision/doc blocks)
+    // Build message list: history + current message (with vision/doc blocks).
+    // Recent assistant messages carry their structured tool results (SQL rows)
+    // so follow-ups like "chart that" or "filter those" keep working.
+    const recentAssistantWithData = conversationHistory
+      .filter((m) => m.role === 'assistant' && m.structured_results)
+      .slice(-2);
     const messages = conversationHistory
       .slice(-20)
       .filter((m) => m.content)
-      .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content) }));
+      .map((m) => {
+        let content = String(m.content);
+        if (m.role === 'assistant' && recentAssistantWithData.includes(m)) {
+          try {
+            const data = typeof m.structured_results === 'string'
+              ? m.structured_results
+              : JSON.stringify(m.structured_results);
+            content += `\n\n[STRUCTURED DATA BEHIND THIS ANSWER — reuse for follow-ups instead of re-querying]\n${String(data).slice(0, 20000)}`;
+          } catch (_e) { /* best-effort */ }
+        }
+        return { role: m.role === 'assistant' ? 'assistant' : 'user', content };
+      });
 
     const userContent = [];
     for (const img of imageAttachments || []) {
@@ -182,12 +234,18 @@ Provide a natural-language query; table discovery and SQL generation are automat
     let tokensUsed = 0;
     const toolResults = [];
     const sources = [];
+    const structuredResults = []; // retained SQL/table data for future turns
     let finalText = '';
     let iteration = 0;
 
     while (true) {
       iteration++;
       const isFirstIteration = iteration === 1;
+
+      // Server-side stop: the client is gone — stop spending tokens now.
+      if (ctx.isCancelled?.()) {
+        return { success: false, cancelled: true, error: 'Stopped by user' };
+      }
 
       const params = sanitizeAnthropicParams({
         model: this.model,
@@ -245,6 +303,26 @@ Provide a natural-language query; table discovery and SQL generation are automat
               tool: tu.name,
               confidence: result.confidence ?? null,
               summary: result.source_summary || null,
+              // Grounded citation detail: SQL provenance / document links
+              sql: result.data?.sql || null,
+              tables: result.data?.tables || null,
+              items: Array.isArray(result.data)
+                ? result.data
+                    .filter((d) => d && (d.url || d.title))
+                    .slice(0, 6)
+                    .map((d) => ({ title: d.title || d.url, url: d.url || null }))
+                : null,
+            });
+          }
+
+          // Retain structured rows so follow-up turns can reuse them
+          if (result.success && result.data?.rows?.length) {
+            structuredResults.push({
+              tool: tu.name,
+              sql: result.data.sql || null,
+              tables: result.data.tables || null,
+              rowCount: result.data.rowCount,
+              rows: result.data.rows.slice(0, 30),
             });
           }
 
@@ -305,7 +383,7 @@ Provide a natural-language query; table discovery and SQL generation are automat
     return this._finalizeTurn(ctx, {
       mode: 'tool_use',
       finalText, toolResults, sources, tokensUsed, toolCallCount, memories,
-      streamCallback, startedAt,
+      structuredResults, streamCallback, startedAt,
     });
   }
 
@@ -342,7 +420,7 @@ Provide a natural-language query; table discovery and SQL generation are automat
   async processWithPlan(ctx) {
     const { userMessage, streamCallback, startedAt } = ctx;
 
-    const plan = await this.generateExecutionPlan(userMessage);
+    const plan = await this.generateExecutionPlan(userMessage, ctx.conversationHistory);
     streamCallback({ type: 'plan', data: { ...plan, mode: 'plan' } });
 
     const stepResults = [];
@@ -391,10 +469,16 @@ Provide a natural-language query; table discovery and SQL generation are automat
     });
   }
 
-  async generateExecutionPlan(userMessage) {
+  async generateExecutionPlan(userMessage, conversationHistory = []) {
     const toolList = this.toolRegistry
       .getAll()
       .map((t) => `- ${t.name}: ${String(t.description || '').split('\n')[0]}`)
+      .join('\n');
+    // Recent history so "that", "it", "the report we discussed" resolve
+    const historyBlock = (conversationHistory || [])
+      .slice(-6)
+      .filter((m) => m.content)
+      .map((m) => `${m.role}: ${String(m.content).slice(0, 800)}`)
       .join('\n');
     const params = sanitizeAnthropicParams({
       model: this.model,
@@ -404,7 +488,7 @@ Provide a natural-language query; table discovery and SQL generation are automat
         {
           role: 'user',
           content: `Create an execution plan for this request: "${userMessage}"
-
+${historyBlock ? `\nRECENT CONVERSATION (for context — resolve references like "that" or "it" from here):\n${historyBlock}\n` : ''}
 AVAILABLE TOOLS:
 ${toolList}
 
@@ -447,7 +531,7 @@ Return ONLY JSON: {"goal": "...", "steps": [{"tool": "tool_name", "description":
   async processDeepResearch(ctx) {
     const { userMessage, streamCallback, startedAt } = ctx;
 
-    const subQuestions = await deepResearch.decompose(this.modelRouter, userMessage);
+    const subQuestions = await deepResearch.decompose(this.modelRouter, userMessage, ctx.conversationHistory);
     streamCallback({
       type: 'plan',
       data: {
@@ -464,6 +548,9 @@ Return ONLY JSON: {"goal": "...", "steps": [{"tool": "tool_name", "description":
     // Research sub-questions sequentially (each is itself a tool loop) to
     // stay under rate limits; parallelism trades reliability for speed here.
     for (let i = 0; i < subQuestions.length; i++) {
+      if (ctx.isCancelled?.()) {
+        return { success: false, cancelled: true, error: 'Stopped by user' };
+      }
       streamCallback({
         type: 'progress',
         data: { step: i + 1, total: subQuestions.length, tool: 'research', status: `Researching: ${subQuestions[i]}` },
@@ -562,16 +649,49 @@ Return ONLY JSON: {"goal": "...", "steps": [{"tool": "tool_name", "description":
   // ==========================================================================
   async _finalizeTurn(ctx, state) {
     const {
-      mode, finalText, toolResults, sources, tokensUsed, toolCallCount,
-      memories, plan = null, subQuestions = [], startedAt,
+      mode, toolResults, sources, toolCallCount,
+      memories, plan = null, subQuestions = [], structuredResults = [], startedAt,
     } = state;
-    const { sessionId, userId, userMessage, analysis } = ctx;
+    let { finalText, tokensUsed } = state;
+    const { sessionId, userId, userMessage, analysis, streamCallback } = ctx;
 
-    const confidence = scoreResponse({ responseText: finalText, toolResults, sources });
+    let confidence = scoreResponse({ responseText: finalText, toolResults, sources });
 
     let validation = null;
     if (agentFlags.validatorsEnabled()) {
       validation = validateOutput(finalText, { toolCallCount, sources });
+    }
+
+    // Self-correction: one revision pass when the answer scores low or the
+    // validators flag it for review. The corrected text replaces what was
+    // streamed (response_reset → re-stream), and is what gets persisted.
+    const needsCorrection =
+      agentFlags.selfCorrectionEnabled() &&
+      !ctx.isCancelled?.() &&
+      finalText &&
+      finalText.length > 80 &&
+      (confidence < 0.45 || validation?.quality === 'review');
+    if (needsCorrection) {
+      try {
+        const corrected = await this._selfCorrect(ctx, {
+          draft: finalText,
+          issues: validation?.issues || [],
+          confidence,
+        });
+        if (corrected && corrected.text && corrected.text !== finalText) {
+          streamCallback({ type: 'response_reset', data: {} });
+          streamCallback({ type: 'response_chunk', data: { content: corrected.text } });
+          finalText = corrected.text;
+          tokensUsed += corrected.tokensUsed || 0;
+          confidence = scoreResponse({ responseText: finalText, toolResults, sources });
+          if (agentFlags.validatorsEnabled()) {
+            validation = validateOutput(finalText, { toolCallCount, sources });
+          }
+          validation = { ...(validation || {}), self_corrected: true };
+        }
+      } catch (err) {
+        console.warn('Self-correction pass failed (keeping original):', err.message);
+      }
     }
 
     // Persist user + assistant messages
@@ -583,8 +703,8 @@ Return ONLY JSON: {"goal": "...", "steps": [{"tool": "tool_name", "description":
       );
       const saved = await this.dbPool.query(
         `INSERT INTO agent_chat_messages
-           (session_id, role, content, model_used, tokens_used, plan_json, tool_calls, sources, complexity_level, confidence_score)
-         VALUES ($1, 'assistant', $2, $3, $4, $5, $6, $7, $8, $9)
+           (session_id, role, content, model_used, tokens_used, plan_json, tool_calls, sources, complexity_level, confidence_score, structured_results)
+         VALUES ($1, 'assistant', $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING id`,
         [
           sessionId, finalText, this.model, tokensUsed,
@@ -593,6 +713,7 @@ Return ONLY JSON: {"goal": "...", "steps": [{"tool": "tool_name", "description":
           JSON.stringify(sources),
           analysis.complexity,
           confidence,
+          structuredResults.length ? JSON.stringify(structuredResults.slice(-4)) : null,
         ]
       );
       assistantMessageId = saved.rows[0].id;
@@ -637,11 +758,85 @@ Return ONLY JSON: {"goal": "...", "steps": [{"tool": "tool_name", "description":
     };
   }
 
+  /**
+   * One bounded revision pass over a low-confidence / flagged draft.
+   * Uses the primary model, no tools — it can only rework what it has.
+   */
+  async _selfCorrect(ctx, { draft, issues, confidence }) {
+    const issueList = issues.length
+      ? issues.map((i) => `- ${i.type}: ${i.detail}`).join('\n')
+      : '- Low confidence score — verify every claim is supported by the tool results and hedge or remove anything that is not.';
+    const params = sanitizeAnthropicParams({
+      model: this.model,
+      max_tokens: 8000,
+      messages: [
+        {
+          role: 'user',
+          content: `You wrote this draft answer for the user's question, but it was flagged for revision (confidence ${confidence}).
+
+USER'S QUESTION: ${String(ctx.userMessage).slice(0, 2000)}
+
+FLAGGED ISSUES:
+${issueList}
+
+DRAFT ANSWER:
+${String(draft).slice(0, 12000)}
+
+Rewrite the answer fixing the flagged issues. Keep everything that is well-supported. Do NOT invent new data — if something cannot be verified from the draft's own evidence, state the limitation plainly. Keep any <artifact> blocks intact unless they contain the flagged problem. Return ONLY the corrected answer, no preamble.`,
+        },
+      ],
+    });
+    const res = await withRetry(() => this.anthropic.messages.create(params), { label: 'self-correct' });
+    const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+    const tokensUsed = (res.usage?.input_tokens || 0) + (res.usage?.output_tokens || 0);
+    return { text, tokensUsed };
+  }
+
+  /**
+   * Approved feedback → standing guidance lines in the system prompt.
+   * Cached for 5 minutes; failures return ''.
+   */
+  async getFeedbackGuidance() {
+    const now = Date.now();
+    if (now - this._feedbackCache.at < 5 * 60 * 1000) return this._feedbackCache.text;
+    const res = await this.dbPool.query(
+      `SELECT COALESCE(NULLIF(training_instruction, ''), feedback_text) AS instruction
+       FROM agent_feedback
+       WHERE approval_status = 'approved'
+         AND COALESCE(NULLIF(training_instruction, ''), feedback_text) IS NOT NULL
+       ORDER BY created_at DESC
+       LIMIT 15`
+    );
+    const text = res.rows.length
+      ? `LEARNED FROM USER FEEDBACK (admin-approved — always apply):\n${res.rows
+          .map((r) => `- ${String(r.instruction).slice(0, 300)}`)
+          .join('\n')}`
+      : '';
+    this._feedbackCache = { at: now, text };
+    return text;
+  }
+
   // ==========================================================================
   // Prompt assembly
   // ==========================================================================
-  buildToolUseSystemPrompt({ memories = [], outputGuidance = '' } = {}) {
-    const parts = [clientConfig.getSystemPrompt('orchestrator_base')];
+  buildToolUseSystemPrompt({
+    memories = [],
+    outputGuidance = '',
+    feedbackGuidance = '',
+    conversationSummary = null,
+    agentModule = null,
+  } = {}) {
+    const parts = [clientConfig.getSystemPrompt(agentModule || 'orchestrator_base')];
+
+    if (conversationSummary) {
+      parts.push(
+        `EARLIER IN THIS CONVERSATION (rolling summary of turns beyond the recent window):\n${String(conversationSummary).slice(0, 4000)}`
+      );
+    }
+
+    if (feedbackGuidance) {
+      parts.push(feedbackGuidance);
+    }
 
     if (memories.length) {
       parts.push(
@@ -674,7 +869,9 @@ Return ONLY JSON: {"goal": "...", "steps": [{"tool": "tool_name", "description":
       );
     }
     dataLines.push('- hybrid_search / vector_search → the IPS knowledge base (ipsaecorp.com content, meeting transcripts, uploaded documents).');
-    dataLines.push('- search_user_emails → the asking user\'s synced Microsoft 365 email (admins can search all mailboxes).');
+    dataLines.push('- search_user_emails → the asking user\'s synced Microsoft 365 email, including extracted attachment text (admins can search all mailboxes).');
+    dataLines.push('- search_calendar → live Microsoft 365 calendar (own calendar; admins can view others).');
+    dataLines.push('- search_files → live OneDrive/SharePoint file search (own drive; admins can search others).');
     parts.push(dataLines.join('\n'));
 
     const today = new Date().toLocaleDateString('en-US', {

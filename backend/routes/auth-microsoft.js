@@ -122,9 +122,11 @@ module.exports = function microsoftAuthRoutes(dbPool) {
         console.log(`👤 SSO auto-provisioned user: ${email}`);
       }
 
-      const session = jwt.sign({ sub: user.id, role: user.role }, process.env.JWT_SECRET, {
-        expiresIn: '7d',
-      });
+      const session = jwt.sign(
+        { sub: user.id, role: user.role, tv: user.token_version || 0 },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+      );
       res.cookie('session', session, COOKIE_OPTS);
       res.redirect(`${frontendUrl()}/ai-chat`);
     } catch (err) {

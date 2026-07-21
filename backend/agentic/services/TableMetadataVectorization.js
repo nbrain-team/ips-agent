@@ -9,7 +9,8 @@
  */
 const { embedText, toVectorLiteral } = require('../utils/embeddings');
 
-// Infra tables that should never be treated as business data
+// Infra tables that should never be treated as business data.
+// Matched against the BASE table name (schema prefix stripped).
 const EXCLUDED_TABLES = [
   'users', 'agent_chat_sessions', 'agent_chat_messages', 'agent_artifacts',
   'agent_templates', 'agent_session_presence', 'agent_feedback',
@@ -19,7 +20,18 @@ const EXCLUDED_TABLES = [
   'website_content', 'schema_migrations', 'pg_stat_statements',
   // Email tables are permission-scoped — ONLY reachable via search_user_emails
   'ms_emails', 'ms_mailboxes',
+  // Billing-platform infra/auth tables
+  'activity_log', 'user_audit_log', 'user_customer_access', 'user_roles',
+  'gps_backfill_log',
 ];
+
+/** 'ips_cb.field_tickets' → { schema: 'ips_cb', table: 'field_tickets' } */
+function splitQualified(name) {
+  const idx = name.indexOf('.');
+  return idx === -1
+    ? { schema: 'public', table: name }
+    : { schema: name.slice(0, idx), table: name.slice(idx + 1) };
+}
 
 class TableMetadataVectorization {
   /**
@@ -46,25 +58,41 @@ class TableMetadataVectorization {
     }
   }
 
+  /**
+   * All business-data tables across non-system schemas. Tables outside
+   * `public` are returned schema-qualified (e.g. 'ips_cb.field_tickets') so
+   * SQL generation targets the right schema.
+   */
   async listDataTables() {
     const res = await this.dataPool.query(`
-      SELECT table_name FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-      ORDER BY table_name`);
-    return res.rows.map((r) => r.table_name).filter((t) => !EXCLUDED_TABLES.includes(t));
+      SELECT table_schema, table_name FROM information_schema.tables
+      WHERE table_type = 'BASE TABLE'
+        AND table_schema NOT IN ('pg_catalog', 'information_schema')
+        AND table_schema NOT LIKE 'pg_%'
+      ORDER BY table_schema, table_name`);
+    return res.rows
+      .filter(
+        (r) =>
+          !EXCLUDED_TABLES.includes(r.table_name) &&
+          !/auth/i.test(r.table_schema) &&
+          r.table_schema !== 'agent_metadata'
+      )
+      .map((r) => (r.table_schema === 'public' ? r.table_name : `${r.table_schema}.${r.table_name}`));
   }
 
   async describeTable(tableName) {
+    const { schema, table } = splitQualified(tableName);
+    const qualified = `"${schema}"."${table}"`;
     const cols = await this.dataPool.query(
       `SELECT column_name, data_type FROM information_schema.columns
-       WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position`,
-      [tableName]
+       WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position`,
+      [schema, table]
     );
     const columns = cols.rows;
 
     let rowCount = 0;
     try {
-      const rc = await this.dataPool.query(`SELECT COUNT(*)::bigint AS n FROM "${tableName}"`);
+      const rc = await this.dataPool.query(`SELECT COUNT(*)::bigint AS n FROM ${qualified}`);
       rowCount = Number(rc.rows[0].n);
     } catch (_e) { /* permission or timeout — leave 0 */ }
 
@@ -74,7 +102,7 @@ class TableMetadataVectorization {
     if (dateCol && rowCount > 0) {
       try {
         const dr = await this.dataPool.query(
-          `SELECT MIN("${dateCol.column_name}") AS min_d, MAX("${dateCol.column_name}") AS max_d FROM "${tableName}"`
+          `SELECT MIN("${dateCol.column_name}") AS min_d, MAX("${dateCol.column_name}") AS max_d FROM ${qualified}`
         );
         dateRange = { column: dateCol.column_name, min: dr.rows[0].min_d, max: dr.rows[0].max_d };
       } catch (_e) { /* ignore */ }
@@ -83,7 +111,7 @@ class TableMetadataVectorization {
     let sampleRows = [];
     if (rowCount > 0) {
       try {
-        const sr = await this.dataPool.query(`SELECT * FROM "${tableName}" LIMIT 3`);
+        const sr = await this.dataPool.query(`SELECT * FROM ${qualified} LIMIT 3`);
         sampleRows = sr.rows.map((row) => {
           const trimmed = {};
           for (const [k, v] of Object.entries(row)) {
@@ -156,3 +184,4 @@ class TableMetadataVectorization {
 
 module.exports = TableMetadataVectorization;
 module.exports.EXCLUDED_TABLES = EXCLUDED_TABLES;
+module.exports.splitQualified = splitQualified;

@@ -73,7 +73,7 @@ Present the result as a SIMPLE, friendly list (source name — one-line descript
       if (billing.length) {
         sources.push({
           source: 'IPS Billing platform database (Postgres, read-only)',
-          what: 'The existing IPS billing/back-office system (jobs, tickets, billing, Motive fleet data, etc.) — queryable via query_billing_database',
+          what: 'The IPS billing/back-office platform — field tickets & invoices (SAP), Motive fleet GPS, Paycom time entries, KPA safety JSAs, crews & personnel — queryable via query_billing_database',
           ...summarize(billing),
         });
       }

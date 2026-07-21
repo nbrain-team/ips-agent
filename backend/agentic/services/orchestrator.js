@@ -655,20 +655,26 @@ Return ONLY JSON: {"goal": "...", "steps": [{"tool": "tool_name", "description":
       parts.push(`OUTPUT FORMAT GUIDANCE (apply when relevant):\n${outputGuidance}`);
     }
 
-    // AVAILABLE DATA — update as IPS's real sources are wired (Part 11).
+    // AVAILABLE DATA — reflects what is actually wired today (Part 11).
     const dataLines = [
       'AVAILABLE DATA:',
-      '- query_operational_database → the IPS operational Postgres. ⚠️ TODO: name the real tables here once IPS data sources are loaded (jobs/projects, estimating & bids, crews/labor, fleet & equipment, safety/EHS, SCADA telemetry).',
+      '- query_operational_database → the AI platform Postgres. Contains meeting_transcripts (Read.ai meetings: title, dates, participants, summaries, action items, full transcript text).',
     ];
     if (this.billingDbPool) {
       dataLines.push(
-        '- query_billing_database → the IPS Billing/accounting platform (READ-ONLY). Use for invoices, AR/AP, payments, revenue, customer balances. ⚠️ TODO: name key billing tables after vectorization.'
+        `- query_billing_database → the IPS Billing platform (READ-ONLY). This holds nearly ALL IPS business data:
+  • Field tickets & billing: ips_cb.field_tickets, ips_cb.field_ticket_lines, ips_cb.invoices (SAP doc numbers, PO/AFE, totals, paid status), ips_cb.exceptions (AI-classified billing exceptions), ips_cb.customers (SAP card codes, portal type e.g. Ariba)
+  • Fleet/GPS (Motive): ips_cb.motive_driving_periods (vehicle_unit, driver_name, origins/destinations, miles), ips_cb.gps_snapshots
+  • Payroll/time (Paycom): paycom_time_entries, ips_cb.payroll_dsr_truth (GPS vs DSR minutes by crew/day)
+  • Safety (KPA): ips_cb.jsa_records (job sites, hazards, PPE, employees)
+  • People/crews: ips_cb.persons, ips_cb.crews, ips_cb.crew_members, ips_cb.employee_vehicle_map`
       );
       dataLines.push(
-        'ROUTING: accounting/billing/invoice/AR/AP/payment/revenue questions → query_billing_database. Jobs/crews/equipment/safety/operational questions → query_operational_database.'
+        'ROUTING: field tickets, invoices, billing, customers, fleet/Motive/vehicles, payroll/Paycom/hours, safety/JSA, crews → query_billing_database. Meeting/transcript questions → search the knowledge base (hybrid_search) first, or query_operational_database meeting_transcripts for date/participant filters.'
       );
     }
-    dataLines.push('- hybrid_search / vector_search → the IPS knowledge base (ipsaecorp.com content, SOPs, safety manuals, uploaded documents).');
+    dataLines.push('- hybrid_search / vector_search → the IPS knowledge base (ipsaecorp.com content, meeting transcripts, uploaded documents).');
+    dataLines.push('- search_user_emails → the asking user\'s synced Microsoft 365 email (admins can search all mailboxes).');
     parts.push(dataLines.join('\n'));
 
     const today = new Date().toLocaleDateString('en-US', {

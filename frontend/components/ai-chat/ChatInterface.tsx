@@ -130,6 +130,19 @@ export default function ChatInterface({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamText, status]);
 
+  // Prefill from the Platform Tips page ("Try it" hand-off)
+  useEffect(() => {
+    try {
+      const tip = sessionStorage.getItem("ips-tip-prompt");
+      if (tip) {
+        sessionStorage.removeItem("ips-tip-prompt");
+        setInput(tip);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   // Cycle generic phrases while no specific status has arrived
   function startPhraseCycle() {
     let i = 0;

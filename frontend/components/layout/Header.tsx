@@ -3,7 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { MessageSquare, Database, UserCircle, Users, LogOut } from "lucide-react";
+import { MessageSquare, Database, Lightbulb, UserCircle, Users, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface SessionUser {
@@ -15,6 +15,7 @@ interface SessionUser {
 
 const NAV = [
   { href: "/ai-chat", label: "Chat", icon: MessageSquare },
+  { href: "/tips", label: "Tips", icon: Lightbulb },
   { href: "/data", label: "Data", icon: Database },
   { href: "/account", label: "Account", icon: UserCircle },
 ];

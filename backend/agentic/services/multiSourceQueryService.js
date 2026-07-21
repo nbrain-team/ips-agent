@@ -11,7 +11,7 @@
  */
 const Anthropic = require('@anthropic-ai/sdk');
 const TableRouter = require('./TableRouter');
-const { EXCLUDED_TABLES } = require('./TableMetadataVectorization');
+const { EXCLUDED_TABLES, splitQualified } = require('./TableMetadataVectorization');
 const { llmHttpsAgent } = require('../utils/httpAgent');
 const { withRetry, sanitizeAnthropicParams } = require('../utils/anthropicRetry');
 
@@ -38,9 +38,14 @@ class MultiSourceQueryService {
 
   async getAllTables() {
     const res = await this.dataPool.query(`
-      SELECT table_name FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name`);
-    return res.rows.map((r) => r.table_name).filter((t) => !EXCLUDED_TABLES.includes(t));
+      SELECT table_schema, table_name FROM information_schema.tables
+      WHERE table_type = 'BASE TABLE'
+        AND table_schema NOT IN ('pg_catalog', 'information_schema')
+        AND table_schema NOT LIKE 'pg_%'
+      ORDER BY table_schema, table_name`);
+    return res.rows
+      .filter((r) => !EXCLUDED_TABLES.includes(r.table_name) && !/auth/i.test(r.table_schema))
+      .map((r) => (r.table_schema === 'public' ? r.table_name : `${r.table_schema}.${r.table_name}`));
   }
 
   /** Build the schema context block the SQL-writer model sees. */
@@ -57,10 +62,11 @@ class MultiSourceQueryService {
       } else {
         // information_schema fallback if vector metadata is missing columns
         try {
+          const { schema, table } = splitQualified(t.table_name);
           const live = await this.dataPool.query(
             `SELECT column_name, data_type FROM information_schema.columns
-             WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position`,
-            [t.table_name]
+             WHERE table_schema=$1 AND table_name=$2 ORDER BY ordinal_position`,
+            [schema, table]
           );
           block += `\n  COLUMNS: ${live.rows.map((c) => `"${c.column_name}" ${c.data_type}`).join(', ')}`;
         } catch (_e) { /* ignore */ }
@@ -88,7 +94,8 @@ ${schemaContext}
 STRICT RULES:
 - ONE SELECT statement only. No DDL/DML of any kind. No semicolons except optionally at the end.
 - Only use the tables listed above: ${tableNames.join(', ')}.
-- Double-quote any column/table names with capitals, spaces, or odd characters.
+- Some table names are schema-qualified (e.g. ips_cb.field_tickets) — keep the schema prefix in the SQL exactly as listed.
+- Double-quote any column/table names with capitals, spaces, or odd characters (quote schema and table separately: "ips_cb"."field_tickets").
 - Add LIMIT ${MAX_ROWS} to list-style results; use aggregates (COUNT/SUM/AVG/GROUP BY) for big tables.
 - Cast where needed; be defensive about NULLs.
 - Return ONLY the SQL, no explanation, no code fences.

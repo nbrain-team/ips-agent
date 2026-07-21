@@ -1,0 +1,43 @@
+@import url("https://fonts.googleapis.com/css2?family=Kumbh+Sans:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ips-red: #ec1c24;
+  --ips-red-dark: #c41725;
+  --ips-charcoal: #231f20;
+  --ips-steel: #465596;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-ips-surface text-ips-charcoal antialiased;
+  font-family: "Kumbh Sans", Arial, Helvetica, sans-serif;
+}
+
+/* Markdown content inside chat bubbles */
+.chat-markdown h1 { @apply text-xl font-semibold mt-4 mb-2 text-ips-charcoal; }
+.chat-markdown h2 { @apply text-lg font-semibold mt-4 mb-2 text-ips-charcoal; }
+.chat-markdown h3 { @apply text-base font-semibold mt-3 mb-1.5 text-ips-charcoal; }
+.chat-markdown p { @apply my-2 leading-relaxed; }
+.chat-markdown ul { @apply list-disc pl-5 my-2 space-y-1; }
+.chat-markdown ol { @apply list-decimal pl-5 my-2 space-y-1; }
+.chat-markdown a { @apply text-ips-steel underline; }
+.chat-markdown blockquote { @apply border-l-4 border-ips-red pl-3 italic text-ips-charcoal-600 my-2; }
+.chat-markdown code { @apply bg-ips-surface text-ips-red-dark px-1 py-0.5 rounded text-[0.85em]; }
+.chat-markdown pre { @apply bg-ips-charcoal-900 text-gray-100 rounded-lg p-3 overflow-x-auto my-3 text-sm; }
+.chat-markdown pre code { @apply bg-transparent text-inherit p-0; }
+.chat-markdown table { @apply text-sm border-collapse my-3 block overflow-x-auto max-w-full; }
+.chat-markdown th { @apply border border-ips-border bg-ips-surface px-2.5 py-1.5 text-left font-semibold; }
+.chat-markdown td { @apply border border-ips-border px-2.5 py-1.5; }
+
+/* Thin scrollbars */
+.thin-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.thin-scroll::-webkit-scrollbar-thumb { @apply bg-ips-border rounded; }
+.thin-scroll::-webkit-scrollbar-track { background: transparent; }

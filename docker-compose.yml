@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: ips-postgres
+    environment:
+      POSTGRES_USER: ips_user
+      POSTGRES_PASSWORD: ips_local_dev
+      POSTGRES_DB: ips_ai
+    ports:
+      - "5433:5432"
+    volumes:
+      - ips_pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: ips-redis
+    ports:
+      - "6380:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+volumes:
+  ips_pgdata:

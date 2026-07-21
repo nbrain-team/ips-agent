@@ -1,0 +1,137 @@
+# ============================================================================
+# IPS AI Platform — Render Blueprint
+# ============================================================================
+# Provisions: backend web service, frontend web service, managed Postgres,
+# managed Redis. Set all `sync: false` secrets in the Render dashboard.
+# ============================================================================
+
+services:
+  # ----- Backend API -----
+  - type: web
+    name: ips-backend
+    runtime: node
+    env: node
+    region: oregon
+    plan: starter
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ips-db
+          property: connectionString
+      - key: DATABASE_SSL
+        value: true
+      # Secondary DB: existing IPS Billing platform (read-only). Set in dashboard.
+      # See Part 11.1 of the build context.
+      - key: IPS_BILLING_DATABASE_URL
+        sync: false
+      - key: IPS_BILLING_DATABASE_SSL
+        value: true
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: ips-redis
+          property: connectionString
+      - key: FRONTEND_URL
+        fromService:
+          type: web
+          name: ips-frontend
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: JWT_SECRET
+        generateValue: true
+      # Admin bootstrap — set in dashboard
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_INITIAL_PASSWORD
+        sync: false
+      # AI keys — set manually in the dashboard
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GOOGLE_AI_API_KEY
+        sync: false
+      # Vector DB (optional Pinecone; pgvector works without it)
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: PINECONE_ENVIRONMENT
+        sync: false
+      - key: PINECONE_INDEX_NAME
+        value: ips-knowledge
+      # Agent intelligence flags
+      - key: FEATURE_LONG_TERM_MEMORY
+        value: true
+      - key: FEATURE_DEEP_RESEARCH
+        value: true
+      - key: FEATURE_OUTPUT_VALIDATORS
+        value: true
+      - key: FEATURE_AGENT_TRACE
+        value: true
+      # Capability flags
+      - key: FEATURE_CODE_EXEC
+        value: true
+      - key: FEATURE_VOICE
+        value: false
+      - key: FEATURE_VIDEO
+        value: false
+      - key: FEATURE_GMAIL
+        value: false
+      - key: FEATURE_CALENDAR
+        value: false
+      # Client identity
+      - key: CLIENT_NAME
+        value: IPS
+      - key: CLIENT_ID
+        value: ips
+      # IPS palette (verify from ipsaecorp.com + logo)
+      - key: BRAND_PRIMARY_COLOR
+        value: "#EC1C24"
+      - key: BRAND_SECONDARY_COLOR
+        value: "#231F20"
+      - key: BRAND_LOGO_URL
+        value: /ips-logo.png
+
+  # ----- Frontend (Next.js) -----
+  - type: web
+    name: ips-frontend
+    runtime: node
+    env: node
+    region: oregon
+    plan: starter
+    rootDir: frontend
+    # --legacy-peer-deps avoids npm strict peer-dep failures on react-markdown@9
+    # --include=dev ensures typescript is present at build time
+    buildCommand: npm install --legacy-peer-deps --include=dev && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_BASE_URL
+        fromService:
+          type: web
+          name: ips-backend
+          envVarKey: RENDER_EXTERNAL_URL
+
+# ----- Database -----
+databases:
+  - name: ips-db
+    databaseName: ips_ai
+    user: ips_user
+    plan: basic-256mb
+    region: oregon
+    postgresMajorVersion: 15
+
+# ----- Redis -----
+  - type: redis
+    name: ips-redis
+    plan: starter
+    region: oregon
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []

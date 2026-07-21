@@ -41,7 +41,19 @@ function verifyReadaiSignature(req) {
 module.exports = function webhooksRoutes(dbPool) {
   const router = express.Router();
 
-  router.post('/readai/:secret', (req, res) => {
+  // Accept text/plain too (used by the browser-based backfill to avoid CORS
+  // preflight) — the body is still JSON, still signature-verified.
+  const textParser = express.text({ type: 'text/plain', limit: '50mb' });
+
+  router.post('/readai/:secret', textParser, (req, res) => {
+    if (typeof req.body === 'string') {
+      req.rawBody = Buffer.from(req.body, 'utf8');
+      try {
+        req.body = JSON.parse(req.body);
+      } catch (_e) {
+        return res.status(400).json({ error: 'Invalid JSON' });
+      }
+    }
     const expected = process.env.READAI_WEBHOOK_SECRET;
     if (!expected) return res.status(503).json({ error: 'Webhook not configured' });
     const given = String(req.params.secret || '');

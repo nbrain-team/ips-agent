@@ -44,4 +44,49 @@ function isImage(mimetype) {
   return IMAGE_MIMES.includes(mimetype);
 }
 
-module.exports = { extractText, isImage, IMAGE_MIMES };
+/**
+ * Extract text in an ISOLATED child process with a hard memory cap + timeout.
+ * Malformed PDFs can make pdf.js spin/balloon ("Indexing all PDF objects…"),
+ * which — run in-process — blocks the event loop, fails the platform health
+ * check, and crash-loops the whole API. A bad file now just kills the worker.
+ * Resolves to { text } or { error } — never rejects.
+ */
+function extractTextIsolated(buffer, filename, mimetype, timeoutMs = 30000) {
+  const { spawn } = require('child_process');
+  return new Promise((resolve) => {
+    const proc = spawn(
+      process.execPath,
+      [
+        '--max-old-space-size=256',
+        path.join(__dirname, '..', '..', 'scripts', 'extract-text-worker.js'),
+        filename || 'file',
+        mimetype || '',
+      ],
+      { stdio: ['pipe', 'pipe', 'ignore'] }
+    );
+    let out = '';
+    let done = false;
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      proc.kill('SIGKILL');
+      finish({ error: `extraction timed out after ${timeoutMs / 1000}s` });
+    }, timeoutMs);
+    proc.stdout.on('data', (c) => { out += c; });
+    proc.on('error', (err) => finish({ error: String(err.message) }));
+    proc.on('close', () => {
+      try {
+        finish(JSON.parse(out));
+      } catch (_e) {
+        finish({ error: 'extraction worker crashed (likely corrupt or oversized file)' });
+      }
+    });
+    proc.stdin.end(buffer);
+  });
+}
+
+module.exports = { extractText, extractTextIsolated, isImage, IMAGE_MIMES };

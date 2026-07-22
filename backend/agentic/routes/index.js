@@ -7,7 +7,7 @@ const multer = require('multer');
 const crypto = require('crypto');
 const requireAuthFactory = require('../../middleware/requireAuth');
 const requireAdminFactory = require('../../middleware/requireAdmin');
-const { extractText, isImage } = require('../services/documentProcessor');
+const { extractTextIsolated, isImage } = require('../services/documentProcessor');
 const { getRecentTraces } = require('../services/agentTrace');
 const { getDashboard } = require('../services/confidenceScoring');
 const clientConfig = require('../config/client-config');
@@ -341,11 +341,18 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
             data: file.buffer.toString('base64'),
           });
         } else {
-          const text = await extractText(file.buffer, file.originalname, file.mimetype);
+          // Isolated worker: a corrupt PDF can't block/OOM the API process
+          const result = await extractTextIsolated(file.buffer, file.originalname, file.mimetype);
+          if (result.error) {
+            return res.status(422).json({
+              success: false,
+              error: `Could not read "${file.originalname}": ${result.error}`,
+            });
+          }
           descriptors.push({
             kind: 'document',
             filename: file.originalname,
-            text: String(text).slice(0, 100000),
+            text: String(result.text || '').slice(0, 100000),
           });
         }
       }

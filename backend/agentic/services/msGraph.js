@@ -138,7 +138,16 @@ function addressList(recipients) {
  * attachment and never fail the message sync.
  */
 async function syncAttachments(dbPool, token, msUserId, message) {
-  const { extractText } = require('./documentProcessor');
+  // Skip messages whose attachments were already processed — without this,
+  // every hourly sync re-downloads and re-extracts the same files forever.
+  try {
+    const existing = await dbPool.query(
+      `SELECT 1 FROM ms_email_attachments WHERE ms_message_id = $1 LIMIT 1`,
+      [message.id]
+    );
+    if (existing.rows.length) return 0;
+  } catch (_e) { /* table missing — proceed */ }
+
   let data;
   try {
     data = await graphGet(
@@ -157,12 +166,11 @@ async function syncAttachments(dbPool, token, msUserId, message) {
     let text = null;
     let extractError = null;
     if (EXTRACTABLE_EXT.test(filename)) {
-      try {
-        const buffer = Buffer.from(att.contentBytes, 'base64');
-        text = String(await extractText(buffer, filename, att.contentType || '')).slice(0, ATTACHMENT_TEXT_CAP);
-      } catch (err) {
-        extractError = String(err.message).slice(0, 300);
-      }
+      const { extractTextIsolated } = require('./documentProcessor');
+      const buffer = Buffer.from(att.contentBytes, 'base64');
+      const result = await extractTextIsolated(buffer, filename, att.contentType || '');
+      if (result.error) extractError = String(result.error).slice(0, 300);
+      else text = String(result.text || '').slice(0, ATTACHMENT_TEXT_CAP);
     }
     try {
       const result = await dbPool.query(

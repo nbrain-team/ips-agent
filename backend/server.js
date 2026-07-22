@@ -337,6 +337,22 @@ async function start() {
   }
 }
 
+// Safety net: background jobs (email sync, attachment extraction, crawls)
+// must never take the API down. Log loudly, record to the failure inbox,
+// keep serving. (Fatal startup errors still exit via start().catch below.)
+process.on('unhandledRejection', (err) => {
+  console.error('⚠️ Unhandled rejection (service kept alive):', err?.stack || err);
+  require('./agentic/services/ingestFailures')
+    .recordFailure(dbPool, { source: 'other', reference: 'unhandledRejection', error: String(err?.message || err) })
+    .catch(() => {});
+});
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ Uncaught exception (service kept alive):', err?.stack || err);
+  require('./agentic/services/ingestFailures')
+    .recordFailure(dbPool, { source: 'other', reference: 'uncaughtException', error: String(err?.message || err) })
+    .catch(() => {});
+});
+
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received — shutting down');

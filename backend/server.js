@@ -126,7 +126,10 @@ app.use(
     max: parseInt(process.env.GLOBAL_RATE_LIMIT_MAX || '600', 10),
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => req.path.startsWith('/webhooks'),
+    // Federation traffic all originates from the master agent's single Render
+    // IP, so it would burn the per-IP budget for everyone else. It carries its
+    // own shared-secret gate.
+    skip: (req) => req.path.startsWith('/webhooks') || req.path.startsWith('/federation'),
   })
 );
 
@@ -173,6 +176,14 @@ async function start() {
   app.use('/api/channels', require('./routes/channels/api')(dbPool, () => orchestrator));
   app.use('/api/webhooks', require('./routes/webhooks')(dbPool));
   app.use('/api/admin/ops', require('./routes/admin-ops')(dbPool, billingDbPool));
+
+  // Agent federation — lets the Ingram Businesses master agent discover and
+  // run this agent's tools. Inert unless FEDERATION_KEY is set.
+  const { createIpsFederationRouter } = require('./federation/ips');
+  app.use(
+    '/api/federation',
+    createIpsFederationRouter({ dbPool, billingDbPool, getToolRegistry: () => toolRegistry })
+  );
 
   // Health check — run a real SELECT 1 so DB status is accurate
   app.get('/health', async (_req, res) => {

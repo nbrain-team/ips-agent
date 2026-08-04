@@ -56,6 +56,62 @@ function inferModality(tool) {
 }
 
 /**
+ * Normalise a tool's parameter declaration into JSON Schema.
+ *
+ * Most agents already declare `{ type: 'object', properties: {…} }`, which
+ * passes through untouched. Studio Golf declares a flat map instead —
+ * `{ query: { type, required, description } }` — because its planner reads
+ * parameters as prose rather than handing them to a tool-calling API. Shipping
+ * that shape in a manifest would produce tool definitions the master's model
+ * rejects, so convert it here rather than rewriting nine tool files.
+ */
+function toJsonSchema(parameters) {
+  if (!parameters || typeof parameters !== 'object') {
+    return { type: 'object', properties: {} };
+  }
+
+  // Already JSON Schema — but not necessarily *valid* JSON Schema. Several
+  // tools mix the two conventions and mark individual properties with
+  // `required: true` inside an otherwise correct schema. Anthropic validates
+  // against draft 2020-12, where `required` must be an array at the object
+  // level; a boolean there rejects the ENTIRE request, taking down every tool
+  // the master offers rather than just the malformed one. Hoist it.
+  if (parameters.type === 'object' || parameters.properties) {
+    const props = parameters.properties || {};
+    const hoisted = [];
+    const cleaned = {};
+    for (const [name, spec] of Object.entries(props)) {
+      if (!spec || typeof spec !== 'object') {
+        cleaned[name] = spec;
+        continue;
+      }
+      const { required: isRequired, ...rest } = spec;
+      if (isRequired === true) hoisted.push(name);
+      cleaned[name] = rest;
+    }
+    if (!hoisted.length) return parameters;
+    const existing = Array.isArray(parameters.required) ? parameters.required : [];
+    return {
+      ...parameters,
+      properties: cleaned,
+      required: [...new Set([...existing, ...hoisted])],
+    };
+  }
+
+  const properties = {};
+  const required = [];
+  for (const [name, spec] of Object.entries(parameters)) {
+    if (!spec || typeof spec !== 'object') continue;
+    const { required: isRequired, ...rest } = spec;
+    properties[name] = { type: rest.type || 'string', ...rest };
+    if (isRequired) required.push(name);
+  }
+  const schema = { type: 'object', properties };
+  if (required.length) schema.required = required;
+  return schema;
+}
+
+/**
  * Constant-time key comparison.
  *
  * `===` on a secret leaks it a byte at a time to anyone patient enough to
@@ -135,7 +191,7 @@ function createFederationRouter(options) {
         .map((t) => ({
           name: t.name,
           description: t.description || t.name,
-          input_schema: t.parameters || t.input_schema || { type: 'object', properties: {} },
+          input_schema: toJsonSchema(t.input_schema || t.parameters),
           kind: inferKind(t),
           modality: inferModality(t),
           category: t.category || 'general',
@@ -197,4 +253,4 @@ function createFederationRouter(options) {
   return router;
 }
 
-module.exports = { createFederationRouter, PROTOCOL, inferKind, inferModality };
+module.exports = { createFederationRouter, PROTOCOL, inferKind, inferModality, toJsonSchema };

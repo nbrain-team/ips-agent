@@ -33,6 +33,18 @@ Data routing for IPS questions:
 - Meeting transcripts (Read.ai and Otter) live in the IPS knowledge base — reach them via ips.hybrid_search, or ips.query_operational_database when filtering by date or participant.
 - Never invent IPS figures. Every number must come from a tool result.
 
+ALWAYS pass the "hint" parameter to ips.query_billing_database with the most likely table name. Its semantic table discovery is unreliable without one and will silently answer from the wrong table. The billing schema is:
+  ips_cb.field_tickets, field_ticket_lines, field_ticket_verifications — SAP B1 field tickets
+  ips_cb.invoices, invoice_lines, document_bundles, portal_submissions — billing output
+  ips_cb.exceptions — verification failures needing review
+  ips_cb.customers, customer_rules — customers (pilot: Mewbourne Oil Co)
+  ips_cb.jsa_records — KPA job safety analyses
+  ips_cb.gps_snapshots, motive_driving_periods, employee_vehicle_map — Motive fleet GPS
+  ips_cb.paycom_time_entries, payroll_truth, payroll_dsr_truth — Paycom payroll and hours
+  ips_cb.crews, crew_members, persons — people and crew assignments
+  ips_cb.job_overlay, data_source_status, tax_rates — supporting reference data
+If a billing result looks implausible (zero rows where you expect data, or a table name unrelated to the question), retry once with an explicit hint before reporting the number.
+
 The pilot billing customer is Mewbourne Oil Co. IPS uses "field ticket" (not work order) and "JSA" for job safety analysis.`;
 
 /** Per-tool overrides where the name heuristic in index.js guesses wrong. */

@@ -113,9 +113,48 @@ QUESTION: ${question}`;
       messages: [{ role: 'user', content: prompt }],
     });
     const res = await withRetry(() => this.anthropic.messages.create(params), { label: 'sql-gen' });
-    let sql = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
-    sql = sql.replace(/^```(sql)?/i, '').replace(/```$/, '').trim();
-    return sql;
+    return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+  }
+
+  /**
+   * Pull the statement out of whatever the model actually returned.
+   *
+   * "Return ONLY the SQL" is an instruction, not a guarantee. In practice the
+   * answer comes back fenced, prefixed with "Here's the query:", or led by a
+   * `-- comment` — all of which are still perfectly good SQL that the old
+   * startsWith check threw away. Returns null when there is genuinely no
+   * statement in there, which is the signal that the model answered in prose
+   * instead, and that is worth handling as its own case rather than as a
+   * malformed-SQL error.
+   */
+  static extractSQL(raw) {
+    if (!raw) return null;
+    let text = String(raw).trim();
+
+    // Prefer a fenced block wherever it sits in the response.
+    const fenced = text.match(/```(?:sql)?\s*\n?([\s\S]*?)```/i);
+    if (fenced && fenced[1].trim()) text = fenced[1].trim();
+
+    // Drop leading line comments and blank lines.
+    const lines = text.split('\n');
+    while (lines.length && (!lines[0].trim() || /^\s*--/.test(lines[0]))) lines.shift();
+    text = lines.join('\n').trim();
+
+    // Drop a leading block comment.
+    text = text.replace(/^\/\*[\s\S]*?\*\/\s*/, '').trim();
+
+    if (/^(SELECT|WITH)\b/i.test(text)) return text;
+
+    // Last resort: the statement may be buried under a sentence of preamble.
+    const idx = text.search(/\b(SELECT|WITH)\b/i);
+    if (idx > 0) {
+      const tail = text.slice(idx).trim();
+      // Only trust this if it reads like a query rather than a sentence that
+      // happens to contain the word "select".
+      if (/\bFROM\b/i.test(tail)) return tail;
+    }
+
+    return null;
   }
 
   validateSQL(sql) {
@@ -153,6 +192,48 @@ QUESTION: ${question}`;
     }
   }
 
+  /**
+   * Generate, extract, and validate — retrying once when the model answers
+   * with something other than a statement.
+   *
+   * The retry is worth its cost: the usual cause is a stray sentence of
+   * preamble, which a pointed correction fixes on the second pass. When it
+   * fails twice the model is telling us something real — almost always that
+   * the table the question names is not among the ones the router surfaced —
+   * so the prose is returned as the explanation instead of being discarded
+   * behind a validator message that means nothing to an operator.
+   */
+  async writeSQL(question, schemaContext, tableNames) {
+    // Attach the model's output to a rejection. Without it the query_history
+    // row records that generation failed but not what it produced, which is
+    // the only thing that would explain why.
+    const validate = (candidate, rawText) => {
+      try {
+        return this.validateSQL(candidate);
+      } catch (err) {
+        err.generatedSql = rawText;
+        throw err;
+      }
+    };
+
+    const raw = await this.generateSQL(question, schemaContext, tableNames);
+    const first = MultiSourceQueryService.extractSQL(raw);
+    if (first) return { sql: validate(first, raw), raw };
+
+    const retryRaw = await this.generateSQL(
+      `${question}\n\nIMPORTANT: your previous response was not a SQL statement. Reply with ` +
+        'nothing but the SELECT (or WITH) statement — no prose, no explanation, no code fences. ' +
+        'If the question cannot be answered from the tables listed above, reply with exactly ' +
+        'CANNOT_ANSWER followed by one sentence saying which table or column is missing.',
+      schemaContext,
+      tableNames
+    );
+    const second = MultiSourceQueryService.extractSQL(retryRaw);
+    if (second) return { sql: validate(second, retryRaw), raw: retryRaw };
+
+    return { sql: null, raw: retryRaw || raw };
+  }
+
   async logQuery({ question, sql, rowCount, success, error, durationMs }) {
     try {
       await this.metadataPool.query(
@@ -185,7 +266,29 @@ QUESTION: ${question}`;
       let schemaContext = await this.buildDynamicSchemaContext(relevant);
       let tableNames = relevant.map((r) => r.table_name);
 
-      sql = this.validateSQL(await this.generateSQL(question, schemaContext, tableNames));
+      const written = await this.writeSQL(question, schemaContext, tableNames);
+      if (!written.sql) {
+        // Not a fault — the SQL writer is reporting that this database cannot
+        // answer the question. Say that plainly, and name the tables it did
+        // have, so the calling agent can answer the operator instead of
+        // relaying an internal validator message.
+        const why = String(written.raw || '')
+          .replace(/^CANNOT_ANSWER[:\s-]*/i, '')
+          .split('\n')
+          .find((l) => l.trim()) || 'the SQL writer could not express it against these tables';
+        const explanation =
+          `This database cannot answer that. ${why.trim().slice(0, 400)} ` +
+          `Tables searched: ${tableNames.join(', ')}.`;
+        await this.logQuery({
+          question,
+          sql: written.raw,
+          success: false,
+          error: explanation,
+          durationMs: Date.now() - started,
+        });
+        return { success: false, error: explanation, unanswerable: true, rows: [], rowCount: 0, tables: tableNames };
+      }
+      sql = written.sql;
       let rows = await this.executeQuery(sql);
 
       // Empty result → one retry with a rephrase + widened table set
@@ -195,17 +298,20 @@ QUESTION: ${question}`;
           schemaContext = await this.buildDynamicSchemaContext(wider);
           tableNames = wider.map((r) => r.table_name);
         }
-        const retrySql = this.validateSQL(
-          await this.generateSQL(
-            `${question}\n\n(The previous attempt returned zero rows with this SQL: ${sql}. Try different tables, broader filters, or case-insensitive matching.)`,
-            schemaContext,
-            tableNames
-          )
+        const retry = await this.writeSQL(
+          `${question}\n\n(The previous attempt returned zero rows with this SQL: ${sql}. Try different tables, broader filters, or case-insensitive matching.)`,
+          schemaContext,
+          tableNames
         );
-        const retryRows = await this.executeQuery(retrySql);
-        if (retryRows.length > 0) {
-          sql = retrySql;
-          rows = retryRows;
+        // A widened second pass that produces no statement is not worth
+        // failing over — the first query ran fine and legitimately found
+        // nothing, which is an answer.
+        if (retry.sql) {
+          const retryRows = await this.executeQuery(retry.sql);
+          if (retryRows.length > 0) {
+            sql = retry.sql;
+            rows = retryRows;
+          }
         }
       }
 
@@ -213,7 +319,13 @@ QUESTION: ${question}`;
       await this.logQuery({ question, sql, rowCount: rows.length, success: true, durationMs });
       return { success: true, sql, rows, rowCount: rows.length, tables: tableNames };
     } catch (err) {
-      await this.logQuery({ question, sql, success: false, error: err.message, durationMs: Date.now() - started });
+      await this.logQuery({
+        question,
+        sql: sql || err.generatedSql || null,
+        success: false,
+        error: err.message,
+        durationMs: Date.now() - started,
+      });
       return { success: false, error: err.message, sql, rows: [], rowCount: 0 };
     }
   }

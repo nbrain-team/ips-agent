@@ -54,7 +54,19 @@ Do NOT announce that you are querying — use this tool silently and present the
     try {
       const result = await this.queryService.query(params.query, { hint: params.hint || null });
       if (!result.success) {
-        return { success: false, error: result.error, confidence: 0 };
+        // "This database has no such table" is a real answer, not a
+        // malfunction. Carry the explanation and the tables that were searched
+        // so the calling agent can tell the operator what is actually missing
+        // rather than relaying an internal error string.
+        return {
+          success: false,
+          error: result.error,
+          unanswerable: result.unanswerable || false,
+          formatted: result.error,
+          summary: result.unanswerable ? 'No matching data in this database' : 'Query failed',
+          data: result.tables ? { tables: result.tables } : undefined,
+          confidence: 0,
+        };
       }
       const formatted = this.formatRecords(result.rows);
       return {

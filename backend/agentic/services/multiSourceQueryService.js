@@ -145,13 +145,26 @@ QUESTION: ${question}`;
 
     if (/^(SELECT|WITH)\b/i.test(text)) return text;
 
-    // Last resort: the statement may be buried under a sentence of preamble.
-    const idx = text.search(/\b(SELECT|WITH)\b/i);
-    if (idx > 0) {
-      const tail = text.slice(idx).trim();
-      // Only trust this if it reads like a query rather than a sentence that
-      // happens to contain the word "select".
-      if (/\bFROM\b/i.test(tail)) return tail;
+    // Last resort: the statement may sit under a line of preamble.
+    //
+    // "Contains SELECT and FROM" is too loose to be the test. A refusal reads
+    // "you would need to select from an email table, but no such table
+    // exists", which satisfies it, and recovering that as SQL is worse than
+    // recovering nothing — the validator passes it, Postgres rejects it, and a
+    // clear "this database cannot answer that" becomes a syntax error.
+    //
+    // The distinction that actually holds is position. A real statement starts
+    // a line, or follows a colon. A verb in the middle of a sentence does not.
+    const candidates = [
+      text.match(/^[ \t]*((?:SELECT|WITH)\b[\s\S]*)$/im),
+      text.match(/:[ \t]*((?:SELECT|WITH)\b[\s\S]*)$/i),
+    ];
+
+    for (const match of candidates) {
+      if (!match) continue;
+      const tail = match[1].trim();
+      // A query needs a source. Keep this as a floor even once positioned.
+      if (/\bFROM\b/i.test(tail) || /^SELECT\b[^;]*$/i.test(tail)) return tail;
     }
 
     return null;

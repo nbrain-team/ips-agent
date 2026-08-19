@@ -57,7 +57,9 @@ function extractTextIsolated(buffer, filename, mimetype, timeoutMs = 30000) {
     const proc = spawn(
       process.execPath,
       [
-        '--max-old-space-size=256',
+        // Parent + this child share one 512MB container on the starter plan —
+        // the child's cap must leave the API process comfortable headroom.
+        '--max-old-space-size=160',
         path.join(__dirname, '..', '..', 'scripts', 'extract-text-worker.js'),
         filename || 'file',
         mimetype || '',

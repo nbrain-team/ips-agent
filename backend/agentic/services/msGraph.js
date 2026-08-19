@@ -20,9 +20,12 @@ const SYNC_DAYS = parseInt(process.env.EMAIL_SYNC_DAYS || '30', 10);
 const MAX_PAGES_PER_MAILBOX = parseInt(process.env.MS_SYNC_MAX_PAGES || '20', 10);
 const MAX_PAGES_INITIAL = parseInt(process.env.MS_SYNC_MAX_PAGES_INITIAL || '80', 10);
 const BODY_CHAR_CAP = 20000;
-const ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024; // skip anything larger
+const ATTACHMENT_MAX_BYTES = 4 * 1024 * 1024; // skip anything larger
 const ATTACHMENT_TEXT_CAP = 60000;
 const EXTRACTABLE_EXT = /\.(pdf|docx?|xlsx?|pptx|csv|txt|md|json|html?)$/i;
+// Kill-switch: set EMAIL_ATTACHMENTS_ENABLED=false to stop attachment
+// ingestion entirely without a code change (email body sync unaffected).
+const ATTACHMENTS_ENABLED = process.env.EMAIL_ATTACHMENTS_ENABLED !== 'false';
 
 function isConfigured() {
   return !!(
@@ -132,12 +135,30 @@ function addressList(recipients) {
     .filter(Boolean);
 }
 
+/** Download one attachment's raw bytes (no base64-in-JSON blowup). */
+async function downloadAttachmentBytes(token, msUserId, messageId, attachmentId) {
+  const res = await fetch(
+    `${GRAPH}/users/${msUserId}/messages/${messageId}/attachments/${attachmentId}/$value`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw new Error(`attachment download: HTTP ${res.status}`);
+  const ab = await res.arrayBuffer();
+  if (ab.byteLength > ATTACHMENT_MAX_BYTES) throw new Error('attachment larger than advertised');
+  return Buffer.from(ab);
+}
+
 /**
  * Fetch a message's file attachments, extract text from supported document
  * types, and store them. Best-effort: extraction errors are recorded per
  * attachment and never fail the message sync.
+ *
+ * MEMORY-CRITICAL: the listing is METADATA-ONLY ($select without
+ * contentBytes). Fetching attachments inline meant one JSON response could
+ * carry ~100MB of base64, which OOM-killed the 512MB instance. Each file is
+ * now downloaded individually as raw bytes only when it's worth extracting.
  */
 async function syncAttachments(dbPool, token, msUserId, message) {
+  if (!ATTACHMENTS_ENABLED) return 0;
   // Skip messages whose attachments were already processed — without this,
   // every hourly sync re-downloads and re-extracts the same files forever.
   try {
@@ -151,7 +172,7 @@ async function syncAttachments(dbPool, token, msUserId, message) {
   let data;
   try {
     data = await graphGet(
-      `${GRAPH}/users/${msUserId}/messages/${message.id}/attachments?$top=10`,
+      `${GRAPH}/users/${msUserId}/messages/${message.id}/attachments?$select=id,name,contentType,size,isInline&$top=10`,
       token
     );
   } catch (_e) {
@@ -160,17 +181,22 @@ async function syncAttachments(dbPool, token, msUserId, message) {
   let saved = 0;
   for (const att of data.value || []) {
     if (att['@odata.type'] !== '#microsoft.graph.fileAttachment') continue;
-    if (!att.contentBytes) continue;
-    if ((att.size || 0) > ATTACHMENT_MAX_BYTES) continue;
+    if (att.isInline) continue; // signature logos etc.
     const filename = att.name || 'attachment';
     let text = null;
     let extractError = null;
-    if (EXTRACTABLE_EXT.test(filename)) {
-      const { extractTextIsolated } = require('./documentProcessor');
-      const buffer = Buffer.from(att.contentBytes, 'base64');
-      const result = await extractTextIsolated(buffer, filename, att.contentType || '');
-      if (result.error) extractError = String(result.error).slice(0, 300);
-      else text = String(result.text || '').slice(0, ATTACHMENT_TEXT_CAP);
+    if ((att.size || 0) > ATTACHMENT_MAX_BYTES) {
+      extractError = `skipped: ${Math.round((att.size || 0) / 1048576)}MB exceeds size cap`;
+    } else if (EXTRACTABLE_EXT.test(filename)) {
+      try {
+        const { extractTextIsolated } = require('./documentProcessor');
+        const buffer = await downloadAttachmentBytes(token, msUserId, message.id, att.id);
+        const result = await extractTextIsolated(buffer, filename, att.contentType || '');
+        if (result.error) extractError = String(result.error).slice(0, 300);
+        else text = String(result.text || '').slice(0, ATTACHMENT_TEXT_CAP);
+      } catch (err) {
+        extractError = String(err.message).slice(0, 300);
+      }
     }
     try {
       const result = await dbPool.query(

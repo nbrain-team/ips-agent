@@ -872,6 +872,11 @@ Rewrite the answer fixing the flagged issues. Keep everything that is well-suppo
     dataLines.push('- search_user_emails → the asking user\'s synced Microsoft 365 email, including extracted attachment text (admins can search all mailboxes).');
     dataLines.push('- search_calendar → live Microsoft 365 calendar (own calendar; admins can view others).');
     dataLines.push('- search_files → live OneDrive/SharePoint file search (own drive; admins can search others).');
+    if (require('./fieldvu').isConfigured()) {
+      dataLines.push(
+        '- query_fieldvu → FieldVu Cloud LIVE (IPS field-service platform on SAP B1): jobs, equipment, field tickets (headers + detail), work orders, workers, customers, items, material inventory, price lists, branches. Use for CURRENT field-ops questions ("open tickets this week", "active jobs for XTO"); use query_billing_database for historical/billing analysis (invoices, paid status, exceptions).'
+      );
+    }
     parts.push(dataLines.join('\n'));
 
     const today = new Date().toLocaleDateString('en-US', {

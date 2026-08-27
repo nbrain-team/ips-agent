@@ -87,6 +87,13 @@ services:
         value: false
       - key: FEATURE_CALENDAR
         value: false
+      # FieldVu Cloud (live field-service API) — set secrets in dashboard
+      - key: FIELDVU_USERNAME
+        sync: false
+      - key: FIELDVU_PASSWORD
+        sync: false
+      - key: FIELDVU_COMPANY_ID
+        sync: false
       # Client identity
       - key: CLIENT_NAME
         value: IPS

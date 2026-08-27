@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Database, BookOpen, FileText, Cpu, Landmark, Mail, Calendar, FolderOpen, ChevronDown, ExternalLink } from "lucide-react";
+import { Database, BookOpen, FileText, Cpu, Landmark, Mail, Calendar, FolderOpen, Wrench, ChevronDown, ExternalLink } from "lucide-react";
 
 export interface Source {
   type: string;
@@ -21,6 +21,7 @@ const ICONS: Record<string, any> = {
   email: Mail,
   calendar: Calendar,
   files: FolderOpen,
+  fieldvu: Wrench,
 };
 
 const LABELS: Record<string, string> = {
@@ -33,6 +34,7 @@ const LABELS: Record<string, string> = {
   email: "Email",
   calendar: "Calendar",
   files: "Files",
+  fieldvu: "FieldVu (live)",
   system: "Platform",
 };
 

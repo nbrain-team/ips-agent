@@ -100,6 +100,14 @@ Present the result as a SIMPLE, friendly list (source name — one-line descript
         });
       }
 
+      const fieldvu = require('../services/fieldvu');
+      if (fieldvu.isConfigured()) {
+        sources.push({
+          source: 'FieldVu Cloud (live)',
+          what: 'IPS field-service platform (front end to SAP Business One), queried live via query_fieldvu — jobs, equipment, field tickets, work orders, workers, customers, items, material inventory, price lists. Always current.',
+        });
+      }
+
       const meetings = await db
         .query(`SELECT COUNT(*)::int AS n, MAX(meeting_start) AS latest FROM meeting_transcripts`)
         .catch(() => ({ rows: [{ n: 0, latest: null }] }));

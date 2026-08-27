@@ -12,6 +12,7 @@ import {
   BookOpen,
   BarChart3,
   Sparkles,
+  Wrench,
   Copy,
   Check,
   Play,
@@ -65,6 +66,41 @@ const SECTIONS: TipSection[] = [
         title: "PO / AFE lookup",
         prompt:
           "Find all invoices tied to AFE number [enter AFE] — show totals, billing periods, and current status.",
+      },
+    ],
+  },
+  {
+    id: "fieldvu",
+    icon: Wrench,
+    label: "FieldVu Live (Jobs, Tickets & Equipment)",
+    source: "FieldVu Cloud API · live, always current",
+    blurb:
+      "The agent queries FieldVu directly — the same system the field uses — so answers about jobs, tickets, equipment, workers, and inventory reflect this minute, not last night's sync.",
+    tips: [
+      {
+        title: "Latest approved tickets",
+        prompt:
+          "Using FieldVu live data, show me the 10 most recent approved field tickets — doc number, date, job, customer, and who created them.",
+      },
+      {
+        title: "Active jobs for a customer",
+        prompt:
+          "What jobs do we currently have in FieldVu for [customer name]? Include job code, name, and status.",
+      },
+      {
+        title: "Ticket deep-dive",
+        prompt:
+          "Pull the full detail on FieldVu field ticket [doc number] — line items, quantities, prices, and total.",
+      },
+      {
+        title: "Equipment roster",
+        prompt:
+          "List our equipment in FieldVu — group it by equipment type and flag anything inactive.",
+      },
+      {
+        title: "Field workers",
+        prompt:
+          "Who are our active field workers in FieldVu and what work types is each one set up for?",
       },
     ],
   },

@@ -49,7 +49,9 @@ ENTITIES: jobs, equipment, equipment_types, workers, customers, items, inventory
 
 FIELD TICKET HEADERS include: DocNum, Date, JobCode, JobName, CustomerCode, CustomerName, Status (e.g. Approved/Submitted), CreatedBy, Description, BillingDocumentId.
 
-FILTERING: pass OData $filter syntax in "filter", e.g. "Status eq 'Approved'", "Date ge 2026-08-01T00:00:00Z", "contains(CustomerName,'XTO')", "contains(name,'pump')". Paginate with top/skip.`,
+FILTERING: pass OData $filter syntax in "filter", e.g. "Status eq 'Approved'", "Date ge 2026-08-01T00:00:00Z", "contains(CustomerName,'XTO')", "contains(name,'pump')". Paginate with top/skip.
+
+SORTING: results are NOT sorted by default — for "most recent"/"latest" questions ALWAYS pass orderby, e.g. "Date desc" for field_tickets/work_orders.`,
   category: 'database',
   requiresApproval: false,
   parameters: {
@@ -67,6 +69,10 @@ FILTERING: pass OData $filter syntax in "filter", e.g. "Status eq 'Approved'", "
       filter: {
         type: 'string',
         description: "Optional OData $filter expression, e.g. \"Status eq 'Approved' and Date ge 2026-08-01T00:00:00Z\".",
+      },
+      orderby: {
+        type: 'string',
+        description: 'Optional OData $orderby, e.g. "Date desc" (field_tickets/work_orders) — REQUIRED for most-recent/latest questions since results are unsorted by default.',
       },
       top: { type: 'number', description: 'Max rows to return (default 25, max 100).' },
       skip: { type: 'number', description: 'Rows to skip for pagination (default 0).' },
@@ -97,6 +103,7 @@ FILTERING: pass OData $filter syntax in "filter", e.g. "Status eq 'Approved'", "
         const sep = () => (url.includes('?') ? '&' : '?');
         url += `${sep()}$top=${top}`;
         if (skip) url += `&$skip=${skip}`;
+        if (params.orderby) url += `&$orderby=${encodeURIComponent(params.orderby)}`;
         if (params.filter) {
           // The inventory base URL already carries a $filter — AND them together.
           if (spec.hasFilter) {

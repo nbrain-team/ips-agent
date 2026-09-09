@@ -5,6 +5,14 @@
  * Read.ai doesn't sign payloads, so auth is a secret path segment
  * (READAI_WEBHOOK_SECRET). We ACK immediately and ingest asynchronously so
  * Read.ai never times out on long transcripts.
+ *
+ * Otter.ai: POST /api/webhooks/otter/:secret
+ * Otter has no webhook product — the sender here is our own ingram-otter-sync
+ * Render cron (ingram-main repo), which harvests the shared Ingram Otter
+ * account daily and pushes each meeting to this endpoint. Auth is the same
+ * secret-path pattern (OTTER_WEBHOOK_SECRET). Unlike Read.ai we await the
+ * ingest and return the per-meeting result: the caller is our patient cron,
+ * and it logs per-meeting outcomes from the response.
  */
 const express = require('express');
 const crypto = require('crypto');
@@ -88,6 +96,55 @@ module.exports = function webhooksRoutes(dbPool) {
         error: err.message,
       });
     });
+  });
+
+  // Otter.ai — fed by the ingram-otter-sync cron, not by Otter itself.
+  // Body: { session_id, title, start_time, end_time, participants: [{name}],
+  //         summary, transcript_text } — session_id is "otter-<speech_id>",
+  // matching the launch-day backfill so re-deliveries upsert, not duplicate.
+  router.post('/otter/:secret', async (req, res) => {
+    const expected = process.env.OTTER_WEBHOOK_SECRET;
+    if (!expected) return res.status(503).json({ error: 'Webhook not configured' });
+    const given = String(req.params.secret || '');
+    const ok =
+      given.length === expected.length &&
+      crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+    if (!ok) return res.status(401).json({ error: 'Invalid webhook secret' });
+
+    const p = req.body || {};
+    if (!p.title || !p.session_id) {
+      return res.status(400).json({ error: 'title and session_id required' });
+    }
+    // Same floor the cron applies its side: Otter creates a speech record for
+    // every calendar event, including ones it never transcribed — those are
+    // skipped, never stored.
+    const text = String(p.transcript_text || '');
+    if (text.trim().length < 200) {
+      return res.json({ status: 'skipped', reason: 'no transcript content' });
+    }
+
+    try {
+      const result = await ingestMeeting(dbPool, {
+        session_id: p.session_id,
+        source: 'otter.ai',
+        trigger: 'meeting_end',
+        title: p.title,
+        start_time: p.start_time || null,
+        end_time: p.end_time || null,
+        participants: Array.isArray(p.participants) ? p.participants : [],
+        summary: p.summary || '',
+        transcript_text: text,
+      });
+      return res.json({ status: 'ingested', ...result });
+    } catch (err) {
+      console.error('Otter ingest failed:', err.message);
+      recordFailure(dbPool, {
+        source: 'otter',
+        reference: p.title || p.session_id || 'unknown meeting',
+        error: err.message,
+      });
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   return router;

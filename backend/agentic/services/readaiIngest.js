@@ -22,10 +22,14 @@ function textOf(list) {
 function parsePayload(payload) {
   const p = payload || {};
   const transcriptBlocks = p.transcript?.speaker_blocks || [];
-  const transcriptText = transcriptBlocks
-    .map((b) => `${b.speaker?.name || 'Speaker'}: ${b.words || ''}`)
-    .filter((l) => l.length > 2)
-    .join('\n');
+  // Otter arrivals carry pre-formatted flat text (speaker labels inline) rather
+  // than Read.ai's speaker_blocks — take it verbatim when present.
+  const transcriptText = transcriptBlocks.length
+    ? transcriptBlocks
+        .map((b) => `${b.speaker?.name || 'Speaker'}: ${b.words || ''}`)
+        .filter((l) => l.length > 2)
+        .join('\n')
+    : String(p.transcript_text || '');
 
   return {
     sessionId: String(p.session_id || p.id || crypto.createHash('sha256').update(JSON.stringify(p)).digest('hex').slice(0, 24)),
@@ -124,7 +128,7 @@ async function ingestMeeting(dbPool, payload) {
     meeting.sessionId,
   ]);
 
-  console.log(`🎙️ Read.ai ingested: "${meeting.title}" (${meeting.sessionId}) → ${saved} chunks`);
+  console.log(`🎙️ ${meeting.source} ingested: "${meeting.title}" (${meeting.sessionId}) → ${saved} chunks`);
   return { sessionId: meeting.sessionId, title: meeting.title, chunks: saved };
 }
 

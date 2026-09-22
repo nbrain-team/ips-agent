@@ -13,7 +13,7 @@ const { createFederationRouter } = require('./index');
 const clientConfig = require('../agentic/config/client-config');
 
 const AGENT_ID = 'ips';
-const LABEL = 'IPS — Ingram Petroleum Services';
+const LABEL = 'IPS — Ingram Professional Services';
 const DESCRIPTION =
   'Oilfield electrical services contractor operating across Southeast New Mexico, ' +
   'Midland TX, and the Permian Basin. Electrical construction, automation and SCADA, ' +

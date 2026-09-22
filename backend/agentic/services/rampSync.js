@@ -35,8 +35,23 @@ const RAMP_READ_SCOPES = [
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
+// Values pasted into the Render dashboard pick up spaces, newlines and quotes,
+// which Ramp rejects as a "malformed" client ID.
+function credential(name) {
+  return String(process.env[name] || '').trim().replace(/^["']+|["']+$/g, '').trim();
+}
+
+// Shape only — never the value — so a rejected key can be diagnosed from logs.
+function describeCredential(value, expectedPrefix) {
+  const bad = value.replace(/[A-Za-z0-9_]/g, '');
+  return (
+    `length ${value.length}, ${value.startsWith(expectedPrefix) ? `starts with ${expectedPrefix}` : `does NOT start with ${expectedPrefix}`}` +
+    (bad ? `, contains ${bad.length} character(s) other than letters/numbers/underscores` : '')
+  );
+}
+
 function isConfigured() {
-  return Boolean(process.env.RAMP_CLIENT_ID && process.env.RAMP_CLIENT_SECRET);
+  return Boolean(credential('RAMP_CLIENT_ID') && credential('RAMP_CLIENT_SECRET'));
 }
 
 class RampSync {
@@ -48,8 +63,8 @@ class RampSync {
     // Studio Golf has its own Ramp account; a key for any other business is refused.
     this.expectedBusiness = process.env.RAMP_EXPECTED_BUSINESS || 'Ingram Professional';
     this.baseUrl = (process.env.RAMP_BASE_URL || 'https://api.ramp.com').replace(/\/+$/, '');
-    this.clientId = process.env.RAMP_CLIENT_ID;
-    this.clientSecret = process.env.RAMP_CLIENT_SECRET;
+    this.clientId = credential('RAMP_CLIENT_ID');
+    this.clientSecret = credential('RAMP_CLIENT_SECRET');
     this.token = null;
     this.timeout = parseInt(process.env.RAMP_TIMEOUT || '45000');
     this.sleepBetweenCalls = parseFloat(process.env.RAMP_SLEEP || '0.12') * 1000;
@@ -144,7 +159,11 @@ class RampSync {
       // revoked client ID/secret comes back as a 400) means no scope will work.
       const message = resp.data?.error?.message || resp.data?.error_description || resp.data?.error || '';
       if (!/scope/i.test(JSON.stringify(message))) {
-        throw new Error(`Ramp rejected the client ID/secret (HTTP ${resp.status}): ${JSON.stringify(message)}`);
+        throw new Error(
+          `Ramp rejected the client ID/secret (HTTP ${resp.status}): ${JSON.stringify(message)} — ` +
+            `RAMP_CLIENT_ID: ${describeCredential(this.clientId, 'ramp_id_')}; ` +
+            `RAMP_CLIENT_SECRET: ${describeCredential(this.clientSecret, 'ramp_sec_')}`
+        );
       }
     }
     if (granted.length === 0) {

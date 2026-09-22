@@ -140,8 +140,9 @@ class TableMetadataVectorization {
     return parts.join(' ');
   }
 
-  async vectorizeAllTables() {
-    const tables = await this.listDataTables();
+  /** @param {(table: string) => boolean} [only]  Profile just the matching tables (e.g. after one source syncs). */
+  async vectorizeAllTables(only = null) {
+    const tables = (await this.listDataTables()).filter((t) => !only || only(t));
     let ok = 0;
     const errors = [];
     for (const table of tables) {

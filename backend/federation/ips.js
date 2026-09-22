@@ -29,6 +29,7 @@ const PROMPT_FRAGMENT = `IPS, Inc. (Ingram Professional Services) is an oilfield
 
 Data routing for IPS questions:
 - Field tickets, invoices, billing, customers, AR/AP, fleet and Motive GPS, payroll and Paycom hours, JSA safety records, crews → ips.query_billing_database.
+- Ramp corporate cards and spend (card transactions, cardholders, cards, spend limits, bills, reimbursement trips, vendors, GL coding) → ips.query_operational_database with a hint naming the ramp table: ramp.transactions, ramp.users, ramp.cards, ramp.limits, ramp.bills, ramp.trips, ramp.vendors, ramp.accounting_gl_accounts. This is IPS's Ramp account only — Studio Golf's Ramp is a separate account and is never in IPS data.
 - Company information, services, safety procedures, policies, SOPs, and ingested documents → ips.hybrid_search.
 - Meeting transcripts (Read.ai and Otter) live in the IPS knowledge base — reach them via ips.hybrid_search, or ips.query_operational_database when filtering by date or participant.
 - Never invent IPS figures. Every number must come from a tool result.
@@ -93,6 +94,20 @@ function buildDataSources(dbPool, billingDbPool) {
           'Motive GPS, Paycom payroll, KPA JSA records, crews',
       })
     );
+
+    if (require('../agentic/services/rampSync').isConfigured()) {
+      const ramp = await dbPool
+        .query('SELECT MAX(synced_at) AS at FROM ramp.business')
+        .then((r) => r.rows[0]?.at)
+        .catch(() => null);
+      sources.push({
+        id: 'ips_ramp',
+        label: 'Ramp (IPS corporate spend)',
+        kind: 'api',
+        status: ramp ? 'connected' : 'degraded',
+        detail: ramp ? `Synced nightly; last sync ${new Date(ramp).toISOString()}` : 'Configured; first sync not yet complete',
+      });
+    }
 
     // Knowledge-base vector coverage — reported as a count so the master's
     // sidebar can show "8,412 chunks" rather than a bare green dot.

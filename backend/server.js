@@ -346,6 +346,44 @@ async function start() {
     setInterval(runCrawl, crawlDays * 86400000);
     console.log(`🌐 Website re-crawl scheduled every ${crawlDays}d`);
   }
+
+  // 9. Ramp (IPS corporate spend): nightly, plus a catch-up after boot when the
+  //    last good run is over a day old — the service redeploys several times a
+  //    day, and a full Ramp pull on every deploy is wasted API quota.
+  const ramp = require('./agentic/services/rampSync');
+  if (ramp.isConfigured()) {
+    const { recordFailure } = require('./agentic/services/ingestFailures');
+    let rampRunning = false;
+    const runRamp = async (reason) => {
+      if (rampRunning) return;
+      rampRunning = true;
+      try {
+        console.log(`💳 Ramp sync starting (${reason})...`);
+        const result = await new ramp.RampSync(dbPool).sync();
+        console.log(`💳 Ramp sync done: ${result.records} records, ${result.failed.length} endpoints failed`);
+        await new TableMetadataVectorization(dbPool).vectorizeAllTables((t) => t.startsWith('ramp.'));
+      } catch (err) {
+        console.warn('Ramp sync failed:', err.message);
+        recordFailure(dbPool, { source: 'ramp_sync', reference: reason, error: err.message }).catch(() => {});
+      } finally {
+        rampRunning = false;
+      }
+    };
+    setTimeout(async () => {
+      const last = await dbPool
+        .query('SELECT MAX(synced_at) AS at FROM ramp.business')
+        .then((r) => r.rows[0]?.at)
+        .catch(() => null);
+      if (!last || Date.now() - new Date(last).getTime() > 20 * 3600000) runRamp('boot catch-up');
+    }, 3 * 60000);
+    const rampHourUtc = parseInt(process.env.RAMP_SYNC_HOUR_UTC || '10', 10);
+    setInterval(() => {
+      if (new Date().getUTCHours() === rampHourUtc) runRamp('nightly');
+    }, 3600000);
+    console.log(`💳 Ramp sync scheduled daily at ${rampHourUtc}:00 UTC`);
+  } else {
+    console.log('💳 Ramp sync disabled (RAMP_CLIENT_ID / RAMP_CLIENT_SECRET not set)');
+  }
 }
 
 // Safety net: background jobs (email sync, attachment extraction, crawls)

@@ -100,6 +100,21 @@ Present the result as a SIMPLE, friendly list (source name — one-line descript
         });
       }
 
+      const ramp = await db
+        .query(
+          `SELECT (SELECT MAX(synced_at) FROM ramp.business) AS last_sync,
+                  (SELECT COUNT(*)::int FROM ramp.transactions) AS transactions`
+        )
+        .catch(() => null);
+      if (ramp?.rows[0]?.last_sync) {
+        sources.push({
+          source: 'Ramp (IPS corporate cards & spend)',
+          what: 'IPS card transactions, cardholders, cards, spend limits, bills, reimbursement trips, vendors and accounting codes — synced nightly, queryable via query_operational_database (ramp.* tables)',
+          transactions: ramp.rows[0].transactions,
+          last_synced: ramp.rows[0].last_sync,
+        });
+      }
+
       const fieldvu = require('../services/fieldvu');
       if (fieldvu.isConfigured()) {
         sources.push({

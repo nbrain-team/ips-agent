@@ -94,6 +94,12 @@ services:
         sync: false
       - key: FIELDVU_COMPANY_ID
         sync: false
+      # Ramp (IPS corporate spend) — developer app created in IPS's Ramp account,
+      # read scopes only. Set in dashboard.
+      - key: RAMP_CLIENT_ID
+        sync: false
+      - key: RAMP_CLIENT_SECRET
+        sync: false
       # Client identity
       - key: CLIENT_NAME
         value: IPS

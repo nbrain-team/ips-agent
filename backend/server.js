@@ -384,6 +384,65 @@ async function start() {
   } else {
     console.log('💳 Ramp sync disabled (RAMP_CLIENT_ID / RAMP_CLIENT_SECRET not set)');
   }
+
+  // 10. SAP B1 history (2017 → S/4HANA cutover). The first run is a multi-hour
+  //     backfill; it resumes from its saved cursor after every redeploy, and
+  //     the hourly tick is a no-op while it is still going. Tables are
+  //     re-profiled after each round so the agent can query them mid-backfill.
+  const sapB1 = require('./agentic/services/sapB1History');
+  if (sapB1.isConfigured()) {
+    const { recordFailure } = require('./agentic/services/ingestFailures');
+    const reprofile = () =>
+      new TableMetadataVectorization(dbPool).vectorizeAllTables((t) => t.startsWith('sap_b1.'));
+    let sapRunning = false;
+    const runSap = async (reason) => {
+      if (sapRunning) return;
+      sapRunning = true;
+      try {
+        console.log(`🗄️  SAP B1 history sync starting (${reason})...`);
+        await new sapB1.SapB1History(dbPool).run({ onRound: reprofile });
+        await reprofile();
+        console.log('🗄️  SAP B1 history sync done');
+      } catch (err) {
+        console.warn('SAP B1 history sync failed:', err.message);
+        recordFailure(dbPool, { source: 'sap_b1_sync', reference: reason, error: err.message }).catch(() => {});
+      } finally {
+        sapRunning = false;
+      }
+    };
+    setTimeout(() => runSap('boot'), 2 * 60000);
+    const sapEveryMin = parseInt(process.env.SAP_B1_SYNC_INTERVAL_MIN || '60', 10);
+    setInterval(() => runSap('scheduled'), sapEveryMin * 60000);
+    console.log(`🗄️  SAP B1 history sync scheduled every ${sapEveryMin}m`);
+  } else {
+    console.log('🗄️  SAP B1 history sync disabled (SAP_BASE_URL / SAP_USERNAME / SAP_PASSWORD / SAP_COMPANY_DB not set)');
+  }
+
+  // 11. FieldVu Cloud field tickets, stored hourly alongside the B1 history.
+  if (require('./agentic/services/fieldvu').isConfigured()) {
+    const { syncFieldTickets } = require('./agentic/services/fieldvuHistory');
+    const { recordFailure } = require('./agentic/services/ingestFailures');
+    let fvRunning = false;
+    const runFv = async (reason) => {
+      if (fvRunning) return;
+      fvRunning = true;
+      try {
+        const { tickets } = await syncFieldTickets(dbPool);
+        console.log(`🧾 FieldVu field tickets stored: ${tickets}`);
+        if (reason === 'boot') {
+          await new TableMetadataVectorization(dbPool).vectorizeAllTables((t) => t.startsWith('fieldvu.'));
+        }
+      } catch (err) {
+        console.warn('FieldVu ticket sync failed:', err.message);
+        recordFailure(dbPool, { source: 'fieldvu_sync', reference: reason, error: err.message }).catch(() => {});
+      } finally {
+        fvRunning = false;
+      }
+    };
+    setTimeout(() => runFv('boot'), 90000);
+    setInterval(() => runFv('hourly'), 3600000);
+    console.log('🧾 FieldVu field-ticket sync scheduled hourly');
+  }
 }
 
 // Safety net: background jobs (email sync, attachment extraction, crawls)

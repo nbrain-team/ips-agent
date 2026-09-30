@@ -94,6 +94,17 @@ services:
         sync: false
       - key: FIELDVU_COMPANY_ID
         sync: false
+      # SAP Business One Service Layer — legacy system of record (2017 → S/4HANA
+      # cutover), backfilled into the sap_b1 schema. Same values as ips-cb-api;
+      # SAP_COMPANY_DB must be the PRODUCTION company DB. Set in dashboard.
+      - key: SAP_BASE_URL
+        sync: false
+      - key: SAP_USERNAME
+        sync: false
+      - key: SAP_PASSWORD
+        sync: false
+      - key: SAP_COMPANY_DB
+        sync: false
       # Ramp (IPS corporate spend) — developer app created in IPS's Ramp account,
       # read scopes only. Set in dashboard.
       - key: RAMP_CLIENT_ID

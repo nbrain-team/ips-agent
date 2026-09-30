@@ -115,11 +115,21 @@ Present the result as a SIMPLE, friendly list (source name — one-line descript
         });
       }
 
+      const sapB1 = require('../services/sapB1History');
+      if (sapB1.isConfigured()) {
+        const coverage = await sapB1.coverage(db).catch(() => []);
+        sources.push({
+          source: 'SAP Business One history (2017 → 2026 S/4HANA cutover)',
+          what: 'The complete legacy SAP B1 record — field tickets with labor/equipment/material lines, A/R invoices, credit memos, delivery notes, customers and projects — synced hourly, queryable via query_operational_database (sap_b1.* tables)',
+          coverage,
+        });
+      }
+
       const fieldvu = require('../services/fieldvu');
       if (fieldvu.isConfigured()) {
         sources.push({
           source: 'FieldVu Cloud (live)',
-          what: 'IPS field-service platform (front end to SAP Business One), queried live via query_fieldvu — jobs, equipment, field tickets, work orders, workers, customers, items, material inventory, price lists. Always current.',
+          what: 'IPS field-service platform on SAP S/4HANA (field tickets from Feb 6, 2026), queried live via query_fieldvu — jobs, equipment, field tickets, work orders, workers, customers, items, material inventory, price lists. Ticket headers are also stored hourly in fieldvu.field_tickets.',
         });
       }
 

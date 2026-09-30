@@ -28,14 +28,16 @@ const DESCRIPTION =
 const PROMPT_FRAGMENT = `IPS, Inc. (Ingram Professional Services) is an oilfield electrical services contractor established 2012, serving Southeast New Mexico, Midland TX, and the Permian Basin. Offices in Hobbs NM, Loving NM, and Midland TX. Services: oil & gas electrical, automation & control (PLC, SCADA, custody transfer), oilfield fiber optics, powerline construction, hydro excavation, and safety services.
 
 Data routing for IPS questions:
-- Field tickets, invoices, billing, customers, AR/AP, fleet and Motive GPS, payroll and Paycom hours, JSA safety records, crews → ips.query_billing_database.
+- Billing verification (recent field tickets, exceptions, open invoices), customers, fleet and Motive GPS, payroll and Paycom hours, JSA safety records, crews → ips.query_billing_database. Field-ticket and invoice HISTORY follows the systems-of-record section below.
 - Ramp corporate cards and spend (card transactions, cardholders, cards, spend limits, bills, reimbursement trips, vendors, GL coding) → ips.query_operational_database with a hint naming the ramp table: ramp.transactions, ramp.users, ramp.cards, ramp.limits, ramp.bills, ramp.trips, ramp.vendors, ramp.accounting_gl_accounts. This is IPS's Ramp account only — Studio Golf's Ramp is a separate account and is never in IPS data.
 - Company information, services, safety procedures, policies, SOPs, and ingested documents → ips.hybrid_search.
 - Meeting transcripts (Read.ai and Otter) live in the IPS knowledge base — reach them via ips.hybrid_search, or ips.query_operational_database when filtering by date or participant.
 - Never invent IPS figures. Every number must come from a tool result.
 
+{{SYSTEMS_OF_RECORD}}
+
 ALWAYS pass the "hint" parameter to ips.query_billing_database with the most likely table name. Its semantic table discovery is unreliable without one and will silently answer from the wrong table. The billing schema is:
-  ips_cb.field_tickets, field_ticket_lines, field_ticket_verifications — SAP B1 field tickets
+  ips_cb.field_tickets, field_ticket_lines, field_ticket_verifications — recent SAP B1 field tickets under billing verification
   ips_cb.invoices, invoice_lines, document_bundles, portal_submissions — billing output
   ips_cb.exceptions — verification failures needing review
   ips_cb.customers, customer_rules — customers (pilot: Mewbourne Oil Co)
@@ -47,6 +49,25 @@ ALWAYS pass the "hint" parameter to ips.query_billing_database with the most lik
 If a billing result looks implausible (zero rows where you expect data, or a table name unrelated to the question), retry once with an explicit hint before reporting the number.
 
 The pilot billing customer is Mewbourne Oil Co. IPS uses "field ticket" (not work order) and "JSA" for job safety analysis.`;
+
+const B1_HISTORY = `- July 2017 → 2026 S/4HANA cutover: SAP Business One. The COMPLETE B1 history is in the sap_b1 schema → ips.query_operational_database with hint sap_b1.<table>:
+    sap_b1.field_tickets (doc_num, ticket_date, customer, job_code, totals, approval, billed_doc_nums), sap_b1.field_ticket_lines (labor hours by employee, equipment, materials),
+    sap_b1.ar_invoices / ar_invoice_lines, sap_b1.ar_credit_memos / ar_credit_memo_lines, sap_b1.delivery_notes / delivery_note_lines, sap_b1.business_partners, sap_b1.projects.
+  Ticket → billing: ar_invoice_lines.field_ticket_doc_num = field_tickets.doc_num (same link on delivery_note_lines). Early tickets were billed through a delivery note first; the invoice line then points at it with base_type = 15 and base_entry = delivery_notes.doc_entry.
+  sap_b1.sync_state shows backfill progress. If backfill_complete is false for an entity, say the history is still loading and give the date range loaded so far — never conclude a record does not exist.`;
+
+const B1_NOT_CONNECTED = `- July 2017 → 2026 S/4HANA cutover: SAP Business One. The full B1 history is NOT connected yet. For anything before mid-2025, say the B1 history is not yet available — never conclude a record does not exist.`;
+
+function systemsOfRecord() {
+  const b1 = require('../agentic/services/sapB1History').isConfigured() ? B1_HISTORY : B1_NOT_CONNECTED;
+  return `IPS systems of record over time — pick the source by date:
+${b1}
+- Feb 2026 onward: FieldVu Cloud on SAP S/4HANA (new customer numbering, S/4 billing documents). Stored in fieldvu.field_tickets (ips.query_operational_database), or live via ips.query_fieldvu. FieldVu is NOT B1 — never label FieldVu results as B1, and never infer B1's start date from FieldVu.
+- The two overlap during the 2026 transition with different numbering. Report them side by side; do not add their counts together.
+- ips_cb (query_billing_database) holds only the recent tickets the billing platform verifies (June 2025 onward) and open invoices. Use it for verification, exceptions, GPS/payroll/JSA checks — not for history.`;
+}
+
+const promptFragment = () => PROMPT_FRAGMENT.replace('{{SYSTEMS_OF_RECORD}}', systemsOfRecord());
 
 /** Per-tool overrides where the name heuristic in index.js guesses wrong. */
 const KIND_OVERRIDES = {
@@ -106,6 +127,19 @@ function buildDataSources(dbPool, billingDbPool) {
         kind: 'api',
         status: ramp ? 'connected' : 'degraded',
         detail: ramp ? `Synced nightly; last sync ${new Date(ramp).toISOString()}` : 'Configured; first sync not yet complete',
+      });
+    }
+
+    if (require('../agentic/services/sapB1History').isConfigured()) {
+      const cov = await require('../agentic/services/sapB1History').coverage(dbPool).catch(() => null);
+      const describe = (c) =>
+        `${c.entity} ${c.rows.toLocaleString()}${c.rows ? ` (${c.earliest} → ${c.latest})` : ''}${c.backfill_complete ? '' : ' loading'}`;
+      sources.push({
+        id: 'ips_sap_b1_history',
+        label: 'SAP Business One history (2017 → S/4HANA cutover)',
+        kind: 'postgres',
+        status: cov && cov.some((c) => c.rows > 0) ? 'connected' : 'degraded',
+        detail: cov ? cov.map(describe).join('; ') : 'Configured; first backfill not yet started',
       });
     }
 
@@ -185,9 +219,9 @@ function createIpsFederationRouter({ dbPool, billingDbPool, getToolRegistry }) {
     description: DESCRIPTION,
     listTools,
     executeTool,
-    promptFragment: () => PROMPT_FRAGMENT,
+    promptFragment,
     dataSources: buildDataSources(dbPool, billingDbPool),
   });
 }
 
-module.exports = { createIpsFederationRouter, AGENT_ID, PROMPT_FRAGMENT };
+module.exports = { createIpsFederationRouter, AGENT_ID, PROMPT_FRAGMENT, promptFragment };

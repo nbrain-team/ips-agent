@@ -1,10 +1,10 @@
 /**
  * query_fieldvu — live queries against FieldVu Cloud (IPS's field-service
- * platform on top of SAP Business One): jobs, equipment, field tickets,
- * work orders, workers, customers, items, and inventory.
+ * platform on SAP S/4HANA since the 2026 cutover): jobs, equipment, field
+ * tickets, work orders, workers, customers, items, and inventory.
  *
- * This is LIVE operational data straight from FieldVu — always current,
- * unlike the billing database's synced SAP copies.
+ * This is LIVE operational data straight from FieldVu — always current. It
+ * starts Feb 6, 2026; the SAP B1 history before that lives in sap_b1.*.
  */
 const fieldvu = require('../services/fieldvu');
 
@@ -41,9 +41,11 @@ const ENTITIES = {
 
 module.exports = {
   name: 'query_fieldvu',
-  description: `Query FieldVu Cloud LIVE — IPS's field-service platform (front end to SAP Business One). Always-current data on: jobs, equipment & equipment types, field tickets (headers + full detail), work orders, workers/technicians, customers, items/services, material inventory, price lists, and branches.
+  description: `Query FieldVu Cloud LIVE — IPS's field-service platform on SAP S/4HANA since the 2026 cutover. Always-current data on: jobs, equipment & equipment types, field tickets (headers + full detail), work orders, workers/technicians, customers, items/services, material inventory, price lists, and branches.
 
-WHEN TO USE: current field-operations questions — "open field tickets this week", "what jobs are active for XTO?", "equipment list", "who are our field workers?", "inventory at Hobbs", "get field ticket 1396 details". For HISTORICAL/billing analysis (invoices, paid status, exceptions), prefer query_billing_database.
+COVERAGE: field tickets start Feb 6, 2026. FieldVu is NOT SAP Business One — never present these results as B1 data or use them to judge how far back B1 goes. Everything before the cutover (July 2017 onward) is in the sap_b1.* tables via query_operational_database.
+
+WHEN TO USE: current field-operations questions — "open field tickets this week", "what jobs are active for XTO?", "equipment list", "who are our field workers?", "inventory at Hobbs", "get field ticket 1396 details". For history, audits, and invoices before the cutover, use sap_b1.* via query_operational_database.
 
 ENTITIES: jobs, equipment, equipment_types, workers, customers, items, inventory, price_lists, branches, field_tickets, work_orders (lists) — field_ticket_detail, work_order_detail (single record by id).
 

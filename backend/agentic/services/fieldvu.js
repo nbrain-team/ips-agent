@@ -1,8 +1,9 @@
 /**
  * fieldvu — FieldVu Cloud API client (VistaVu field-service platform).
  *
- * IPS runs FieldVu on top of SAP Business One for field operations: jobs,
- * equipment, field tickets, work orders, workers, items, and inventory.
+ * IPS runs FieldVu Cloud on SAP S/4HANA (since the 2026 cutover from SAP
+ * Business One) for field operations: jobs, equipment, field tickets, work
+ * orders, workers, items, and inventory.
  * Auth is HTTP Basic with a dedicated API user; all data is company-scoped
  * by FIELDVU_COMPANY_ID.
  *

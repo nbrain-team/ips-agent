@@ -872,9 +872,14 @@ Rewrite the answer fixing the flagged issues. Keep everything that is well-suppo
     dataLines.push('- search_user_emails → the asking user\'s synced Microsoft 365 email, including extracted attachment text (admins can search all mailboxes).');
     dataLines.push('- search_calendar → live Microsoft 365 calendar (own calendar; admins can view others).');
     dataLines.push('- search_files → live OneDrive/SharePoint file search (own drive; admins can search others).');
+    if (require('./sapB1History').isConfigured()) {
+      dataLines.push(
+        `- SAP Business One HISTORY (July 2017 → 2026 S/4HANA cutover), via query_operational_database with hint sap_b1.<table>: sap_b1.field_tickets + field_ticket_lines, sap_b1.ar_invoices + ar_invoice_lines, sap_b1.ar_credit_memos + lines, sap_b1.delivery_notes + lines, sap_b1.business_partners, sap_b1.projects. This is the complete legacy record — use it for any question before mid-2026, audits, and "earliest/oldest" questions. Ticket → billing: ar_invoice_lines.field_ticket_doc_num = field_tickets.doc_num (same link on delivery_note_lines; delivered tickets reach the invoice via base_type 15 / base_entry = delivery_notes.doc_entry). sap_b1.sync_state shows whether the backfill is complete; if not, say what range is loaded rather than concluding a record does not exist.`
+      );
+    }
     if (require('./fieldvu').isConfigured()) {
       dataLines.push(
-        '- query_fieldvu → FieldVu Cloud LIVE (IPS field-service platform on SAP B1): jobs, equipment, field tickets (headers + detail), work orders, workers, customers, items, material inventory, price lists, branches. Use for CURRENT field-ops questions ("open tickets this week", "active jobs for XTO"); use query_billing_database for historical/billing analysis (invoices, paid status, exceptions).'
+        '- query_fieldvu → FieldVu Cloud LIVE (IPS field-service platform on SAP S/4HANA since the 2026 cutover; first tickets Feb 6, 2026): jobs, equipment, field tickets (headers + detail), work orders, workers, customers, items, material inventory, price lists, branches. Use for CURRENT field-ops questions ("open tickets this week", "active jobs for XTO"). FieldVu is NOT SAP B1 and holds nothing before Feb 2026 — history lives in sap_b1.*. FieldVu ticket headers are also stored in fieldvu.field_tickets for aggregation. B1 and FieldVu overlap in 2026 with different numbering: report them side by side, never summed.'
       );
     }
     parts.push(dataLines.join('\n'));

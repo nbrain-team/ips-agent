@@ -875,7 +875,9 @@ function catalogText() {
     Vendor spend: ap_invoices (+ ap_invoice_lines.account_code → chart_of_accounts.code for the expense account) minus ap_credit_memos; vendor_payments shows cash actually paid.
     Payments → documents: incoming_payment_invoices / vendor_payment_invoices.invoice_doc_entry = ar_invoices / ap_invoices.doc_entry (invoice_type says which).
     General ledger: journal_entry_lines (debit, credit, account_code → chart_of_accounts.code) joined to journal_entries on jdt_num; origin_type names the source document type.
-  sync_state shows backfill progress per entity. If backfill_complete is false or an entity has no row yet, say that part of the history is still loading and give the range loaded so far — never conclude a record does not exist and never say B1 lacks that data.`;
+  sync_state shows backfill progress per entity. If backfill_complete is false or an entity has no row yet, say that part of the history is still loading and give the range loaded so far — never conclude a record does not exist and never say B1 lacks that data.
+  Where B1 data ends: check sap_b1.sync_state (backfill_complete for that entity) BEFORE stating where any B1 table's data ends or how far back it goes. While backfill_complete is false, the latest (or earliest) date loaded so far is NOT where B1 ends — say the history is still loading and give the range loaded so far. Only state an end date for an entity whose backfill_complete is true.
+  Vendor spend while ap_invoices is still loading: lead with what is loaded and say ap_invoices is incomplete, and offer vendor_payments (fully loaded, July 2017 → September 2026) as the complete figure for cash actually PAID to each vendor. Label it as payments, not invoiced spend, and never add the two together.`;
 }
 
 /** Coverage summary for data-source listings: row counts and date span per table. */

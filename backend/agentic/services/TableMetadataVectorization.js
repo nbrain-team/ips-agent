@@ -25,6 +25,15 @@ const EXCLUDED_TABLES = [
   'gps_backfill_log',
 ];
 
+// Schemas written by the source syncs hold only business data, so a name on
+// the list above (ramp.users is Ramp's cardholder list) is not infra there.
+const SYNCED_DATA_SCHEMAS = new Set(['ramp', 'sap_b1', 'fieldvu']);
+
+function isExcludedTable(schema, table) {
+  if (SYNCED_DATA_SCHEMAS.has(schema)) return false;
+  return EXCLUDED_TABLES.includes(table) || /auth/i.test(schema);
+}
+
 /** 'ips_cb.field_tickets' → { schema: 'ips_cb', table: 'field_tickets' } */
 function splitQualified(name) {
   const idx = name.indexOf('.');
@@ -71,12 +80,7 @@ class TableMetadataVectorization {
         AND table_schema NOT LIKE 'pg_%'
       ORDER BY table_schema, table_name`);
     return res.rows
-      .filter(
-        (r) =>
-          !EXCLUDED_TABLES.includes(r.table_name) &&
-          !/auth/i.test(r.table_schema) &&
-          r.table_schema !== 'agent_metadata'
-      )
+      .filter((r) => !isExcludedTable(r.table_schema, r.table_name) && r.table_schema !== 'agent_metadata')
       .map((r) => (r.table_schema === 'public' ? r.table_name : `${r.table_schema}.${r.table_name}`));
   }
 
@@ -185,4 +189,5 @@ class TableMetadataVectorization {
 
 module.exports = TableMetadataVectorization;
 module.exports.EXCLUDED_TABLES = EXCLUDED_TABLES;
+module.exports.isExcludedTable = isExcludedTable;
 module.exports.splitQualified = splitQualified;

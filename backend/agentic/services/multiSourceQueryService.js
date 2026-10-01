@@ -14,7 +14,7 @@
  */
 const Anthropic = require('@anthropic-ai/sdk');
 const TableRouter = require('./TableRouter');
-const { EXCLUDED_TABLES, splitQualified } = require('./TableMetadataVectorization');
+const { isExcludedTable, splitQualified } = require('./TableMetadataVectorization');
 const { llmHttpsAgent } = require('../utils/httpAgent');
 const { withRetry, sanitizeAnthropicParams } = require('../utils/anthropicRetry');
 
@@ -62,6 +62,34 @@ const SAP_B1_JOIN_NOTES = `SAP B1 JOIN KEYS (tables in schema sap_b1):
 - Business partner code: ar_*.customer_code, ap_*.vendor_code, *_payments.card_code, business_partners.card_code.
 - cancelled / canceled are booleans: add "NOT cancelled" (field_tickets: "NOT canceled") unless cancelled documents are asked for.`;
 
+const RAMP_PARTNERS = {
+  transactions: ['users', 'cards', 'trips'],
+  cards: ['users', 'transactions'],
+  users: ['transactions', 'cards'],
+  trips: ['transactions', 'users'],
+  limits: ['transactions', 'users'],
+  vendors: ['transactions'],
+  accounting_gl_accounts: ['transactions'],
+};
+
+const PARTNERS = { sap_b1: SAP_B1_PARTNERS, ramp: RAMP_PARTNERS };
+
+const RAMP_NOTES = `RAMP (IPS corporate cards, schema ramp):
+- KEYS: ramp_id (text) is Ramp's own id. The integer "id" column is a local row number: never join or filter on it.
+  transactions.card_holder_user_id = users.ramp_id; transactions.card_id = cards.ramp_id; transactions.limit_id = limits.ramp_id; transactions.trip_id = trips.ramp_id; transactions.merchant_id = vendors.merchant_id; cards.cardholder_id = users.ramp_id; trips.user_id = users.ramp_id; a refund's original_transaction_id = the original purchase's transactions.ramp_id.
+  Removed users and terminated cards are not in users/cards, so use LEFT JOIN. For spend by person, group on transactions.card_holder_first_name || ' ' || card_holder_last_name (always filled) rather than joining users.
+- UNITS: transactions.amount and trips.total_spend are DOLLARS. These are CENTS (divide by 100): transactions.merchant_amount_value, entity_amount_value, original_transaction_amount_amount and line_items amounts; vendors.total_spend_last_30_days_amount / _ytd_amount / _last_365_days_amount / _all_time_amount; transfers.amount_amount; trips.total_spend_amount_value; limits.restrictions_limit_amount and balance_*_amount; cards.spending_restrictions_total_amount_value. cards.spending_restrictions_amount is dollars. Sum transactions.amount for spend.
+- DATES: user_transaction_time is the purchase date (use it for "spend in <period>"); settlement_date is when it cleared; accounting_date is the posting date.
+- STATE: CLEARED is final, PENDING can still change or drop. Negative amounts are refunds and credits; net them in unless gross spend is asked for.
+- CATEGORIES: sk_category_name is Ramp's merchant category (Restaurants, SaaS / Software, ...). IPS's accounting coding is the jsonb array accounting_categories, one element per dimension, keyed by tracking_category_remote_name:
+  'Category' = SAP GL account (category_id like '617300-000', category_name like 'MEALS/ENTERTAINMENT'; matches accounting_gl_accounts.code / name), 'Division' (Powerline, Electrical, Automation & Fiber, ... overhead), 'Location' (Hobbs, Midland, Andrews, ...).
+  Example: (SELECT c->>'category_name' FROM jsonb_array_elements(t.accounting_categories) c WHERE c->>'tracking_category_remote_name' = 'Category'). An empty array means the transaction is not coded yet.
+  card_holder_department_name / card_holder_location_name are the cardholder's HR department and location, not the transaction's coding.
+- receipts and policy_violations are jsonb arrays: jsonb_array_length(receipts) = 0 means no receipt attached. sync_status 'SYNCED' means exported to the accounting system.
+- vendors.total_spend_* are Ramp's rolling totals as of the last sync; for any specific date range, sum transactions instead.
+- *_info tables (transactions_info, users_info, trips_info, limits_info, transfers_info) are detail copies of the same records, and transactions_info holds only the newest 1,000. Never add them to the base tables; use the base tables for totals.
+- business, business_balance and accounting_all_connections are single rows with everything in raw_data (jsonb). This Ramp account has no bills or vendor credits; IPS's AP bills are in SAP.`;
+
 class MultiSourceQueryService {
   /**
    * @param {Pool} dataPool      pool the SQL runs against
@@ -88,7 +116,7 @@ class MultiSourceQueryService {
         AND table_schema NOT LIKE 'pg_%'
       ORDER BY table_schema, table_name`);
     return res.rows
-      .filter((r) => !EXCLUDED_TABLES.includes(r.table_name) && !/auth/i.test(r.table_schema))
+      .filter((r) => !isExcludedTable(r.table_schema, r.table_name))
       .map((r) => (r.table_schema === 'public' ? r.table_name : `${r.table_schema}.${r.table_name}`));
   }
 
@@ -124,13 +152,14 @@ class MultiSourceQueryService {
       blocks.push(block);
     }
     if (relevantTables.some((t) => String(t.table_name).startsWith('sap_b1.'))) blocks.push(SAP_B1_JOIN_NOTES);
+    if (relevantTables.some((t) => String(t.table_name).startsWith('ramp.'))) blocks.push(RAMP_NOTES);
     return blocks.join('\n\n');
   }
 
   /**
    * Final table set for the SQL writer: tables named in the hint or the
    * question first (whether or not they are profiled yet), then the router's
-   * picks, then the SAP B1 tables those join to.
+   * picks, then the SAP B1 / Ramp tables those join to.
    */
   widenTables(routed, question, hint, live) {
     const clean = (name) => name.replace(/["`]/g, '').replace(/^public\./, '');
@@ -141,9 +170,10 @@ class MultiSourceQueryService {
       .map(clean)
       .filter((t) => live.has(t));
     const order = [...new Set([...named, ...routed.map((r) => r.table_name)])];
-    const partners = order.flatMap((t) =>
-      t.startsWith('sap_b1.') ? (SAP_B1_PARTNERS[t.slice(7)] || []).map((p) => `sap_b1.${p}`) : []
-    );
+    const partners = order.flatMap((t) => {
+      const { schema, table } = splitQualified(t);
+      return ((PARTNERS[schema] || {})[table] || []).map((p) => `${schema}.${p}`);
+    });
     const byName = new Map(routed.map((r) => [r.table_name, r]));
     return [...new Set([...order, ...partners])]
       .filter((t) => live.has(t))

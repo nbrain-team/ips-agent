@@ -45,7 +45,7 @@ Do NOT announce that you are querying — use this tool silently and present the
           },
           hint: {
             type: 'string',
-            description: 'Optional: a specific table name to prioritize, if known.',
+            description: 'Optional: the table name(s) to use, comma-separated when the question joins several (e.g. "sap_b1.ar_invoices, sap_b1.incoming_payments, sap_b1.incoming_payment_invoices").',
           },
         },
         required: ['query'],

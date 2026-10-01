@@ -171,7 +171,7 @@ Answer in chat with the summary and the download link. The link needs no login a
         type: 'object',
         properties: {
           query: { type: 'string', description: 'Natural-language description of the rows you need (NOT SQL).' },
-          hint: { type: 'string', description: 'Optional: a specific table name to prioritize, e.g. sap_b1.ap_invoices.' },
+          hint: { type: 'string', description: 'Optional: the table name(s) to use, comma-separated when the question joins several, e.g. "sap_b1.ap_invoices, sap_b1.vendor_payments".' },
           source: {
             type: 'string',
             enum: sourceEnum,

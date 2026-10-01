@@ -28,6 +28,39 @@ const { isAggregateSQL } = require('../utils/tabular');
 const MAX_ROWS = parseInt(process.env.SMART_DB_MAX_ROWS || '250', 10);
 const MAX_ROWS_AGGREGATE = parseInt(process.env.SMART_DB_MAX_ROWS_AGGREGATE || '2000', 10);
 const STATEMENT_TIMEOUT_MS = 30000;
+const MAX_TABLES = 12;
+
+// Semantic discovery ranks tables one at a time, so a question that needs a
+// join (invoice → payment) can come back with only one side of it. Whenever
+// one of these tables is chosen, the tables it joins to come with it.
+const SAP_B1_PARTNERS = {
+  ar_invoices: ['ar_invoice_lines', 'incoming_payment_invoices', 'incoming_payments'],
+  ar_invoice_lines: ['ar_invoices', 'field_tickets'],
+  incoming_payments: ['incoming_payment_invoices', 'ar_invoices'],
+  incoming_payment_invoices: ['incoming_payments', 'ar_invoices'],
+  ar_credit_memos: ['ar_credit_memo_lines'],
+  ar_credit_memo_lines: ['ar_credit_memos'],
+  ap_invoices: ['ap_invoice_lines', 'vendor_payment_invoices', 'vendor_payments'],
+  ap_invoice_lines: ['ap_invoices', 'chart_of_accounts'],
+  vendor_payments: ['vendor_payment_invoices', 'ap_invoices'],
+  vendor_payment_invoices: ['vendor_payments', 'ap_invoices'],
+  ap_credit_memos: ['ap_credit_memo_lines'],
+  ap_credit_memo_lines: ['ap_credit_memos'],
+  delivery_notes: ['delivery_note_lines'],
+  delivery_note_lines: ['delivery_notes', 'field_tickets'],
+  field_tickets: ['field_ticket_lines'],
+  field_ticket_lines: ['field_tickets'],
+  journal_entries: ['journal_entry_lines', 'chart_of_accounts'],
+  journal_entry_lines: ['journal_entries', 'chart_of_accounts'],
+};
+
+const SAP_B1_JOIN_NOTES = `SAP B1 JOIN KEYS (tables in schema sap_b1):
+- Header to lines: <document>_lines.doc_entry = <document>.doc_entry; journal_entry_lines.jdt_num = journal_entries.jdt_num.
+- Customer payment to invoice: incoming_payment_invoices.doc_entry = incoming_payments.doc_entry AND incoming_payment_invoices.invoice_doc_entry = ar_invoices.doc_entry AND incoming_payment_invoices.invoice_type = 'it_Invoice' ('it_CredItnote' links to ar_credit_memos). Days to pay = incoming_payments.doc_date - ar_invoices.doc_date.
+- Vendor payment to bill: vendor_payment_invoices.doc_entry = vendor_payments.doc_entry AND vendor_payment_invoices.invoice_doc_entry = ap_invoices.doc_entry AND vendor_payment_invoices.invoice_type = 'it_PurchaseInvoice' ('it_PurchaseCreditNote' links to ap_credit_memos).
+- Field ticket to invoice: ar_invoice_lines.field_ticket_doc_num = field_tickets.doc_num (same on delivery_note_lines).
+- Business partner code: ar_*.customer_code, ap_*.vendor_code, *_payments.card_code, business_partners.card_code.
+- cancelled / canceled are booleans: add "NOT cancelled" (field_tickets: "NOT canceled") unless cancelled documents are asked for.`;
 
 class MultiSourceQueryService {
   /**
@@ -90,7 +123,32 @@ class MultiSourceQueryService {
       }
       blocks.push(block);
     }
+    if (relevantTables.some((t) => String(t.table_name).startsWith('sap_b1.'))) blocks.push(SAP_B1_JOIN_NOTES);
     return blocks.join('\n\n');
+  }
+
+  /**
+   * Final table set for the SQL writer: tables named in the hint or the
+   * question first (whether or not they are profiled yet), then the router's
+   * picks, then the SAP B1 tables those join to.
+   */
+  widenTables(routed, question, hint, live) {
+    const clean = (name) => name.replace(/["`]/g, '').replace(/^public\./, '');
+    const named = [
+      ...String(hint || '').split(/[\s,;]+/),
+      ...(String(question).match(/\b[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*\b/gi) || []),
+    ]
+      .map(clean)
+      .filter((t) => live.has(t));
+    const order = [...new Set([...named, ...routed.map((r) => r.table_name)])];
+    const partners = order.flatMap((t) =>
+      t.startsWith('sap_b1.') ? (SAP_B1_PARTNERS[t.slice(7)] || []).map((p) => `sap_b1.${p}`) : []
+    );
+    const byName = new Map(routed.map((r) => [r.table_name, r]));
+    return [...new Set([...order, ...partners])]
+      .filter((t) => live.has(t))
+      .slice(0, Math.max(MAX_TABLES, named.length))
+      .map((t) => byName.get(t) || { table_name: t, row_count: '?', columns_json: [], sample_rows_json: [] });
   }
 
   async generateSQL(question, schemaContext, tableNames, purpose = 'answer') {
@@ -313,20 +371,13 @@ QUESTION: ${question}`;
     const started = Date.now();
     let sql = null;
     try {
-      let relevant = await this.tableRouter.discoverRelevantTables(question, { limit: 6, hint });
-      // A hint naming a real table wins even before that table is profiled;
-      // otherwise the router answers from the nearest profiled lookalike.
-      if (hint) {
-        const live = new Set(await this.getAllTables());
-        const named = String(hint)
-          .split(/[\s,]+/)
-          .map((h) => h.replace(/^public\./, '').replace(/["`]/g, ''))
-          .filter((h) => live.has(h) && !relevant.some((r) => r.table_name === h));
-        relevant = [
-          ...named.map((t) => ({ table_name: t, row_count: '?', columns_json: [], sample_rows_json: [] })),
-          ...relevant,
-        ].slice(0, Math.max(6, named.length));
-      }
+      const live = new Set(await this.getAllTables());
+      let relevant = this.widenTables(
+        await this.tableRouter.discoverRelevantTables(question, { limit: 6, hint }),
+        question,
+        hint,
+        live
+      );
       if (!relevant.length) {
         // Vectors not built yet — fall back to live table list with schema
         const tables = await this.getAllTables();
@@ -366,7 +417,12 @@ QUESTION: ${question}`;
 
       // Empty result → one retry with a rephrase + widened table set
       if (run.rows.length === 0) {
-        const wider = await this.tableRouter.discoverRelevantTables(question, { limit: 10, hint });
+        const wider = this.widenTables(
+          await this.tableRouter.discoverRelevantTables(question, { limit: 10, hint }),
+          question,
+          hint,
+          live
+        );
         if (wider.length > relevant.length) {
           schemaContext = await this.buildDynamicSchemaContext(wider);
           tableNames = wider.map((r) => r.table_name);

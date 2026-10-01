@@ -868,7 +868,7 @@ function catalogText() {
   const tables = tableCatalog.length
     ? tableCatalog.map((t) => `${t.name}${t.approxRows > 0 ? ` (~${t.approxRows.toLocaleString()})` : ''}`).join(', ')
     : 'sap_b1.field_tickets, field_ticket_lines, ar_invoices, ar_invoice_lines, ar_credit_memos, ar_credit_memo_lines, delivery_notes, delivery_note_lines, ap_invoices, ap_invoice_lines, ap_credit_memos, ap_credit_memo_lines, incoming_payments, incoming_payment_invoices, vendor_payments, vendor_payment_invoices, journal_entries, journal_entry_lines, chart_of_accounts, business_partners, projects, sync_state';
-  return `ALL of these SAP B1 tables are queryable (pass the exact table name as the hint): ${tables}.
+  return `ALL of these SAP B1 tables are queryable (pass every table the question needs as the hint, comma-separated, e.g. "sap_b1.ar_invoices, sap_b1.incoming_payments, sap_b1.incoming_payment_invoices"): ${tables}.
   How they connect:
     Field tickets → billing: ar_invoice_lines.field_ticket_doc_num = field_tickets.doc_num (same on delivery_note_lines); delivered tickets reach the invoice via ar_invoice_lines.base_type = 15 and base_entry = delivery_notes.doc_entry.
     Customers and vendors: business_partners.card_code = ar_*.customer_code = ap_*.vendor_code = *_payments.card_code = journal_entry_lines.short_name (card_type cCustomer / cSupplier).

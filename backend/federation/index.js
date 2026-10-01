@@ -196,6 +196,9 @@ function createFederationRouter(options) {
           modality: inferModality(t),
           category: t.category || 'general',
           requiresApproval: false,
+          // A tool that legitimately runs long (export_query_result) says so,
+          // and the master gives that call more than its default timeout.
+          ...(Number.isFinite(t.timeoutMs) ? { timeoutMs: t.timeoutMs } : {}),
         }));
 
       res.json({

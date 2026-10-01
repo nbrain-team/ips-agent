@@ -18,6 +18,7 @@ const agentFlags = require('../config/agentFlags');
 const ModelRouter = require('./modelRouter');
 const LongTermMemory = require('./longTermMemory');
 const SmartDatabaseTool = require('../tools/smartDatabaseTool');
+const ExportQueryTool = require('../tools/exportQueryTool');
 const deepResearch = require('./deepResearch');
 const { analyzeQuery } = require('./queryAnalyzer');
 const { validateOutput } = require('./outputValidators');
@@ -77,10 +78,17 @@ WHEN TO USE: any question about billing, invoices, invoicing, accounts receivabl
 Examples: "total invoiced last month", "which customers have unpaid invoices?", "revenue by customer this year".
 
 Do NOT use for operational questions (jobs, crews, equipment, safety) — use query_operational_database for those.
-Provide a natural-language query; table discovery and SQL generation are automatic.`,
+Provide a natural-language query; table discovery and SQL generation are automatic.
+Returns up to ${SmartDatabaseTool.MAX_ROWS} rows for lists and ${SmartDatabaseTool.MAX_ROWS_AGGREGATE} for aggregated results (totals, rankings). For "all"/"full list"/"export"/"spreadsheet" requests, or results beyond a few hundred rows, use export_query_result with source "billing".`,
       });
       this.toolRegistry.register(billingDb.asTool());
+      this.billingDb = billingDb;
     }
+    const exportTool = new ExportQueryTool(
+      { primary: smartDb.queryService, billing: billingDbPool ? this.billingDb.queryService : null },
+      { dbPool }
+    );
+    this.toolRegistry.register(exportTool.asTool());
   }
 
   // ==========================================================================
@@ -868,6 +876,9 @@ Rewrite the answer fixing the flagged issues. Keep everything that is well-suppo
         'ROUTING: field tickets, invoices, billing, customers, fleet/Motive/vehicles, payroll/Paycom/hours, safety/JSA, crews → query_billing_database. Meeting/transcript questions → search the knowledge base (hybrid_search) first, or query_operational_database meeting_transcripts for date/participant filters.'
       );
     }
+    dataLines.push(
+      '- export_query_result → the FULL result of a data question as a downloadable .xlsx (source "primary" = query_operational_database, "billing" = query_billing_database). The query tools return at most 250 list rows / 2,000 aggregated rows; use export for "all", "every", "full list", "export", "spreadsheet", or anything beyond a few hundred rows, then answer with its summary (row count, totals, preview) and the download link.'
+    );
     dataLines.push('- hybrid_search / vector_search → the IPS knowledge base (ipsaecorp.com content, meeting transcripts, uploaded documents).');
     dataLines.push('- search_user_emails → the asking user\'s synced Microsoft 365 email, including extracted attachment text (admins can search all mailboxes).');
     dataLines.push('- search_calendar → live Microsoft 365 calendar (own calendar; admins can view others).');

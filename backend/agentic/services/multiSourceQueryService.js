@@ -6,7 +6,10 @@
  * 30s statement timeout → return rows. Every run logged to
  * agent_metadata.query_history.
  *
- * SAFETY: hard keyword denylist (SELECT-only), 30s timeout, 100-row cap.
+ * SAFETY: hard keyword denylist (SELECT-only), READ ONLY transaction, 30s
+ * timeout, and a row cap applied in SQL — 250 rows for lists, 2,000 for
+ * aggregates (both env-tunable). export_query_result runs the same pipeline
+ * with its own, larger limits.
  * Works against any pool (primary operational DB or the read-only billing DB).
  */
 const Anthropic = require('@anthropic-ai/sdk');
@@ -20,7 +23,11 @@ const FORBIDDEN_SQL =
 // Dangerous server-side functions that work even inside a SELECT
 const FORBIDDEN_FUNCTIONS =
   /\b(pg_read_file|pg_read_binary_file|pg_ls_dir|pg_stat_file|pg_logdir_ls|lo_import|lo_export|dblink|dblink_exec|pg_sleep|pg_terminate_backend|pg_cancel_backend|pg_reload_conf|pg_rotate_logfile|copy_from|current_setting\s*\(\s*'[^']*password)/i;
-const MAX_ROWS = 250;
+const { isAggregateSQL } = require('../utils/tabular');
+
+const MAX_ROWS = parseInt(process.env.SMART_DB_MAX_ROWS || '250', 10);
+const MAX_ROWS_AGGREGATE = parseInt(process.env.SMART_DB_MAX_ROWS_AGGREGATE || '2000', 10);
+const STATEMENT_TIMEOUT_MS = 30000;
 
 class MultiSourceQueryService {
   /**
@@ -86,7 +93,7 @@ class MultiSourceQueryService {
     return blocks.join('\n\n');
   }
 
-  async generateSQL(question, schemaContext, tableNames) {
+  async generateSQL(question, schemaContext, tableNames, purpose = 'answer') {
     const today = new Date().toISOString().slice(0, 10);
     const prompt = `You are an expert PostgreSQL query writer. Write ONE read-only SELECT statement to answer the question.
 
@@ -100,7 +107,7 @@ STRICT RULES:
 - Only use the tables listed above: ${tableNames.join(', ')}.
 - Some table names are schema-qualified (e.g. ips_cb.field_tickets) — keep the schema prefix in the SQL exactly as listed.
 - Double-quote any column/table names with capitals, spaces, or odd characters (quote schema and table separately: "ips_cb"."field_tickets").
-- Add LIMIT ${MAX_ROWS} to list-style results; use aggregates (COUNT/SUM/AVG/GROUP BY) for big tables.
+${MultiSourceQueryService.limitRules(purpose)}
 - Cast where needed; be defensive about NULLs.
 - Return ONLY the SQL, no explanation, no code fences.
 
@@ -114,6 +121,17 @@ QUESTION: ${question}`;
     });
     const res = await withRetry(() => this.anthropic.messages.create(params), { label: 'sql-gen' });
     return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+  }
+
+  /** The row-limit part of the SQL-writer prompt. Exports want every row; answers want a bounded result. */
+  static limitRules(purpose) {
+    if (purpose === 'export') {
+      return `- This result is written to a spreadsheet for download. Return EVERY matching row: no LIMIT unless the question asks for a top N.
+- Compute rankings, totals and counts in SQL (GROUP BY with SUM/COUNT, ORDER BY the measure) when the question asks for them, and add an ORDER BY that makes the sheet easy to read.`;
+    }
+    return `- Compute totals, rankings and counts IN SQL (GROUP BY with SUM/COUNT/AVG, ORDER BY the measure DESC) — never return raw rows for the reader to add up.
+- Aggregated results (GROUP BY or DISTINCT summaries): LIMIT ${MAX_ROWS_AGGREGATE} at most. When the question asks for all of them (e.g. every vendor ranked by spend), return every group up to that limit.
+- Raw row lists (one row per record): LIMIT ${MAX_ROWS}.`;
   }
 
   /**
@@ -187,16 +205,39 @@ QUESTION: ${question}`;
     return clean;
   }
 
-  async executeQuery(sql) {
+  /** Row cap for a statement: aggregates summarise, so they may return more rows than lists. */
+  static rowCapFor(sql) {
+    return isAggregateSQL(sql) ? MAX_ROWS_AGGREGATE : MAX_ROWS;
+  }
+
+  /**
+   * Run one validated SELECT and return { rows, fields, capped, cap }.
+   *
+   * The cap is applied in SQL by wrapping the statement, so a query that
+   * forgot its LIMIT on a 275k-row table never pulls every row into memory.
+   * One extra row is fetched to tell "exactly the cap" from "more exist".
+   *
+   * @param {object} opts
+   * @param {number} [opts.rowCap]      overrides the list/aggregate cap
+   * @param {number} [opts.cellBudget]  further limits rows to cellBudget / column count
+   * @param {number} [opts.timeoutMs]   statement timeout (default 30s)
+   */
+  async executeQuery(sql, { rowCap = null, cellBudget = null, timeoutMs = STATEMENT_TIMEOUT_MS } = {}) {
+    let cap = rowCap || MultiSourceQueryService.rowCapFor(sql);
+    const body = sql.trim().replace(/;\s*$/, '');
     // Defense in depth: run inside a READ ONLY transaction so even SQL that
     // slips past the denylist cannot write, regardless of the pool's DB role.
     const client = await this.dataPool.connect();
     try {
       await client.query('BEGIN TRANSACTION READ ONLY');
-      await client.query('SET LOCAL statement_timeout = 30000');
-      const res = await client.query(sql);
+      await client.query(`SET LOCAL statement_timeout = ${Math.max(1000, parseInt(timeoutMs, 10) || STATEMENT_TIMEOUT_MS)}`);
+      if (cellBudget) {
+        const shape = await client.query(`SELECT * FROM (\n${body}\n) AS _shape LIMIT 0`);
+        cap = Math.max(1, Math.min(cap, Math.floor(cellBudget / Math.max(1, shape.fields.length))));
+      }
+      const res = await client.query(`SELECT * FROM (\n${body}\n) AS _capped LIMIT ${cap + 1}`);
       await client.query('COMMIT');
-      return res.rows.slice(0, MAX_ROWS);
+      return { rows: res.rows.slice(0, cap), fields: res.fields, capped: res.rows.length > cap, cap };
     } catch (err) {
       try { await client.query('ROLLBACK'); } catch (_e) { /* ignore */ }
       throw err;
@@ -216,7 +257,7 @@ QUESTION: ${question}`;
    * so the prose is returned as the explanation instead of being discarded
    * behind a validator message that means nothing to an operator.
    */
-  async writeSQL(question, schemaContext, tableNames) {
+  async writeSQL(question, schemaContext, tableNames, purpose = 'answer') {
     // Attach the model's output to a rejection. Without it the query_history
     // row records that generation failed but not what it produced, which is
     // the only thing that would explain why.
@@ -229,7 +270,7 @@ QUESTION: ${question}`;
       }
     };
 
-    const raw = await this.generateSQL(question, schemaContext, tableNames);
+    const raw = await this.generateSQL(question, schemaContext, tableNames, purpose);
     const first = MultiSourceQueryService.extractSQL(raw);
     if (first) return { sql: validate(first, raw), raw };
 
@@ -239,7 +280,8 @@ QUESTION: ${question}`;
         'If the question cannot be answered from the tables listed above, reply with exactly ' +
         'CANNOT_ANSWER followed by one sentence saying which table or column is missing.',
       schemaContext,
-      tableNames
+      tableNames,
+      purpose
     );
     const second = MultiSourceQueryService.extractSQL(retryRaw);
     if (second) return { sql: validate(second, retryRaw), raw: retryRaw };
@@ -260,9 +302,14 @@ QUESTION: ${question}`;
 
   /**
    * The full pipeline. Retries with alternative tables when results are empty.
-   * Returns { success, sql, rows, rowCount, tables }.
+   * Returns { success, sql, rows, fields, rowCount, capped, cap, tables }.
+   *
+   * @param {object} opts
+   * @param {string} [opts.hint]     table name to prioritise
+   * @param {string} [opts.purpose]  'answer' (bounded, default) or 'export' (every row)
+   * @param {object} [opts.limits]   executeQuery options: rowCap, cellBudget, timeoutMs
    */
-  async query(question, { hint = null } = {}) {
+  async query(question, { hint = null, purpose = 'answer', limits = {} } = {}) {
     const started = Date.now();
     let sql = null;
     try {
@@ -292,7 +339,7 @@ QUESTION: ${question}`;
       let schemaContext = await this.buildDynamicSchemaContext(relevant);
       let tableNames = relevant.map((r) => r.table_name);
 
-      const written = await this.writeSQL(question, schemaContext, tableNames);
+      const written = await this.writeSQL(question, schemaContext, tableNames, purpose);
       if (!written.sql) {
         // Not a fault — the SQL writer is reporting that this database cannot
         // answer the question. Say that plainly, and name the tables it did
@@ -315,10 +362,10 @@ QUESTION: ${question}`;
         return { success: false, error: explanation, unanswerable: true, rows: [], rowCount: 0, tables: tableNames };
       }
       sql = written.sql;
-      let rows = await this.executeQuery(sql);
+      let run = await this.executeQuery(sql, limits);
 
       // Empty result → one retry with a rephrase + widened table set
-      if (rows.length === 0) {
+      if (run.rows.length === 0) {
         const wider = await this.tableRouter.discoverRelevantTables(question, { limit: 10, hint });
         if (wider.length > relevant.length) {
           schemaContext = await this.buildDynamicSchemaContext(wider);
@@ -327,23 +374,25 @@ QUESTION: ${question}`;
         const retry = await this.writeSQL(
           `${question}\n\n(The previous attempt returned zero rows with this SQL: ${sql}. Try different tables, broader filters, or case-insensitive matching.)`,
           schemaContext,
-          tableNames
+          tableNames,
+          purpose
         );
         // A widened second pass that produces no statement is not worth
         // failing over — the first query ran fine and legitimately found
         // nothing, which is an answer.
         if (retry.sql) {
-          const retryRows = await this.executeQuery(retry.sql);
-          if (retryRows.length > 0) {
+          const retryRun = await this.executeQuery(retry.sql, limits);
+          if (retryRun.rows.length > 0) {
             sql = retry.sql;
-            rows = retryRows;
+            run = retryRun;
           }
         }
       }
 
       const durationMs = Date.now() - started;
+      const { rows, fields, capped, cap } = run;
       await this.logQuery({ question, sql, rowCount: rows.length, success: true, durationMs });
-      return { success: true, sql, rows, rowCount: rows.length, tables: tableNames };
+      return { success: true, sql, rows, fields, rowCount: rows.length, capped, cap, tables: tableNames };
     } catch (err) {
       await this.logQuery({
         question,
@@ -359,3 +408,4 @@ QUESTION: ${question}`;
 
 module.exports = MultiSourceQueryService;
 module.exports.MAX_ROWS = MAX_ROWS;
+module.exports.MAX_ROWS_AGGREGATE = MAX_ROWS_AGGREGATE;

@@ -34,6 +34,10 @@ Data routing for IPS questions:
 - Meeting transcripts (Read.ai and Otter) live in the IPS knowledge base — reach them via ips.hybrid_search, or ips.query_operational_database when filtering by date or participant.
 - Never invent IPS figures. Every number must come from a tool result.
 
+Large results:
+- ips.query_operational_database and ips.query_billing_database return at most 250 rows for raw lists and 2,000 rows for aggregated results. Ask for totals and rankings directly ("all vendors ranked by total spend with amounts") so the SQL aggregates; a result marked CAPPED is partial and must not be presented as complete.
+- For "all", "every", "full list", "export", "spreadsheet"/"Excel" requests, or anything beyond a few hundred rows, call ips.export_query_result with the same query and hint plus source ("primary" for the SAP B1 history, Ramp and FieldVu tables; "billing" for ips_cb). It returns a download link (no login, expires in 24 hours), the row count, column totals and the first rows. Answer in chat from that summary and give the link; do not paste the whole table.
+
 {{SYSTEMS_OF_RECORD}}
 
 ALWAYS pass the "hint" parameter to ips.query_billing_database with the most likely table name. Its semantic table discovery is unreliable without one and will silently answer from the wrong table. The billing schema is:
@@ -77,6 +81,8 @@ const KIND_OVERRIDES = {
   generate_pdf: { kind: 'write', modality: 'pdf' },
   create_task: { kind: 'write', modality: 'table' },
   list_data_sources: { kind: 'read', modality: 'table' },
+  // Writes a spreadsheet artifact, but changes no business data.
+  export_query_result: { kind: 'read', modality: 'table' },
 };
 
 function buildDataSources(dbPool, billingDbPool) {

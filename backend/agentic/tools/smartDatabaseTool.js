@@ -6,6 +6,9 @@
  * A second instance pointed at the billing pool = query_billing_database.
  */
 const MultiSourceQueryService = require('../services/multiSourceQueryService');
+const { toCsv } = require('../utils/tabular');
+
+const MAX_CELL_CHARS = 300;
 
 class SmartDatabaseTool {
   constructor(dataPool, opts = {}) {
@@ -17,6 +20,7 @@ class SmartDatabaseTool {
 
 WHEN TO USE: ANY question about structured operational data — jobs, projects, work orders, bids/estimates, crews, labor hours, equipment, fleet, safety incidents, permits, costs, counts, statistics, trends.
 Examples: "how many active jobs are there?", "total labor hours by crew last month", "list safety incidents this quarter".
+Returns up to ${MultiSourceQueryService.MAX_ROWS} rows for lists and ${MultiSourceQueryService.MAX_ROWS_AGGREGATE} for aggregated results (totals, rankings). For "all"/"full list"/"export"/"spreadsheet" requests, or results beyond a few hundred rows, use export_query_result instead.
 
 Do NOT announce that you are querying — use this tool silently and present the results naturally.`;
     this.queryService = new MultiSourceQueryService(dataPool, {
@@ -68,12 +72,22 @@ Do NOT announce that you are querying — use this tool silently and present the
           confidence: 0,
         };
       }
-      const formatted = this.formatRecords(result.rows);
+      const formatted = SmartDatabaseTool.formatRecords(result);
       return {
         success: true,
-        data: { rowCount: result.rowCount, rows: result.rows, sql: result.sql, tables: result.tables },
+        data: {
+          rowCount: result.rowCount,
+          capped: Boolean(result.capped),
+          rows: result.rows,
+          sql: result.sql,
+          tables: result.tables,
+        },
         formatted,
-        summary: `${result.rowCount} row(s) from ${result.tables?.join(', ') || 'database'}`,
+        // `formatted` carries every returned row plus the SQL, so a caller
+        // that shows the model text (the federation master) can send it alone
+        // instead of the rows twice.
+        formattedComplete: true,
+        summary: `${result.rowCount}${result.capped ? '+' : ''} row(s) from ${result.tables?.join(', ') || 'database'}`,
         confidence: result.rowCount > 0 ? 0.95 : 0.4,
         source_type: this.sourceTag === 'billing' ? 'billing_database' : 'database',
         source_summary: `SQL over ${result.tables?.join(', ')}`,
@@ -83,19 +97,25 @@ Do NOT announce that you are querying — use this tool silently and present the
     }
   }
 
-  /** Render rows as compact text for the model. */
-  formatRecords(rows) {
-    if (!rows || rows.length === 0) return 'Query executed successfully but returned no rows.';
-    const lines = [`${rows.length} record(s):`];
-    for (const row of rows.slice(0, 100)) {
-      lines.push(
-        Object.entries(row)
-          .map(([k, v]) => `${k}: ${v === null ? 'NULL' : String(v).slice(0, 200)}`)
-          .join(' | ')
-      );
+  /**
+   * Every returned row as CSV under a one-line preface (row count, whether the
+   * cap cut it, the SQL). CSV names each column once instead of per row, which
+   * is what lets a 1,000-row ranking fit in one tool result.
+   */
+  static formatRecords({ rows, fields, capped, cap, sql }) {
+    const oneLineSql = String(sql || '').replace(/\s+/g, ' ').trim();
+    if (!rows || rows.length === 0) {
+      return `Query executed successfully but returned no rows. SQL: ${oneLineSql}`;
     }
-    return lines.join('\n');
+    const capNote = capped
+      ? ` CAPPED at ${cap} rows; more rows exist. Do not present this as the complete set; use export_query_result for all of them.`
+      : ' Complete result (not capped).';
+    const columns = fields && fields.length ? [...new Set(fields.map((f) => f.name))] : null;
+    return `${rows.length} row(s).${capNote} SQL: ${oneLineSql}\n${toCsv(rows, { columns, maxCell: MAX_CELL_CHARS })}`;
   }
 }
+
+SmartDatabaseTool.MAX_ROWS = MultiSourceQueryService.MAX_ROWS;
+SmartDatabaseTool.MAX_ROWS_AGGREGATE = MultiSourceQueryService.MAX_ROWS_AGGREGATE;
 
 module.exports = SmartDatabaseTool;

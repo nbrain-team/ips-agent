@@ -392,8 +392,10 @@ async function start() {
   const sapB1 = require('./agentic/services/sapB1History');
   if (sapB1.isConfigured()) {
     const { recordFailure } = require('./agentic/services/ingestFailures');
-    const reprofile = () =>
-      new TableMetadataVectorization(dbPool).vectorizeAllTables((t) => t.startsWith('sap_b1.'));
+    const reprofile = async () => {
+      await sapB1.refreshTableCatalog(dbPool);
+      return new TableMetadataVectorization(dbPool).vectorizeAllTables((t) => t.startsWith('sap_b1.'));
+    };
     let sapRunning = false;
     const runSap = async (reason) => {
       if (sapRunning) return;

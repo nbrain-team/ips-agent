@@ -303,7 +303,110 @@ function mapArDocument(d) {
   return { header, lines };
 }
 
-/** Document entities, synced by DocEntry keyset. Order = slice order. */
+const AP_COLS = AR_COLS.map((c) => ({ customer_code: 'vendor_code', customer_name: 'vendor_name', customer_ref: 'vendor_ref' })[c] || c);
+const APL_COLS = [
+  'doc_entry', 'line_num', 'item_code', 'description', 'quantity', 'price', 'line_total',
+  'project_code', 'account_code', 'base_type', 'base_entry', 'raw_data',
+];
+
+/** Purchase documents share the sales document shape; the partner is a vendor. */
+function mapApDocument(d) {
+  const { header, lines } = mapArDocument(d);
+  const { customer_code, customer_name, customer_ref, ...rest } = header;
+  return { header: { ...rest, vendor_code: customer_code, vendor_name: customer_name, vendor_ref: customer_ref }, lines };
+}
+
+const PAY_COLS = [
+  'doc_entry', 'doc_num', 'doc_date', 'card_code', 'card_name', 'doc_type', 'cash_sum', 'transfer_sum',
+  'check_sum', 'credit_card_sum', 'total', 'transfer_reference', 'remarks', 'journal_remarks', 'cancelled', 'raw_data',
+];
+const PAYL_COLS = ['doc_entry', 'line_num', 'invoice_doc_entry', 'invoice_type', 'sum_applied'];
+const PAY_SELECT = [
+  'DocEntry', 'DocNum', 'DocDate', 'CardCode', 'CardName', 'DocType', 'CashSum', 'TransferSum',
+  'TransferReference', 'Remarks', 'JournalRemarks', 'Cancelled', 'PaymentChecks', 'PaymentCreditCards', 'PaymentInvoices',
+].join(',');
+
+function mapPayment(p) {
+  const sum = (arr, field) => (arr || []).reduce((n, x) => n + (num(x[field]) || 0), 0);
+  const checks = sum(p.PaymentChecks, 'CheckSum');
+  const cards = sum(p.PaymentCreditCards, 'CreditSum');
+  const header = {
+    doc_entry: p.DocEntry,
+    doc_num: int(p.DocNum),
+    doc_date: date(p.DocDate),
+    card_code: str(p.CardCode),
+    card_name: str(p.CardName),
+    doc_type: str(p.DocType),
+    cash_sum: num(p.CashSum),
+    transfer_sum: num(p.TransferSum),
+    check_sum: checks,
+    credit_card_sum: cards,
+    total: (num(p.CashSum) || 0) + (num(p.TransferSum) || 0) + checks + cards,
+    transfer_reference: str(p.TransferReference),
+    remarks: str(p.Remarks),
+    journal_remarks: str(p.JournalRemarks),
+    cancelled: yes(p.Cancelled),
+    raw_data: JSON.stringify(compact(p)),
+  };
+  const lines = (p.PaymentInvoices || []).map((l, i) => ({
+    doc_entry: p.DocEntry,
+    line_num: int(l.LineNum) ?? i,
+    invoice_doc_entry: int(l.DocEntry),
+    invoice_type: str(l.InvoiceType),
+    sum_applied: num(l.SumApplied),
+  }));
+  return { header, lines };
+}
+
+const JE_COLS = [
+  'jdt_num', 'number', 'reference_date', 'due_date', 'tax_date', 'memo', 'reference1', 'reference2',
+  'reference3', 'transaction_code', 'project_code', 'origin_type', 'origin_ref', 'total_debit', 'raw_data',
+];
+const JEL_COLS = [
+  'jdt_num', 'line_id', 'account_code', 'short_name', 'debit', 'credit', 'line_memo', 'project_code',
+  'contra_account', 'reference1', 'reference2', 'costing_code',
+];
+const JE_SELECT = [
+  'JdtNum', 'Number', 'ReferenceDate', 'DueDate', 'TaxDate', 'Memo', 'Reference', 'Reference2', 'Reference3',
+  'TransactionCode', 'ProjectCode', 'OriginalJournal', 'Original', 'BaseReference', 'JournalEntryLines',
+].join(',');
+
+function mapJournalEntry(j) {
+  const lines = (j.JournalEntryLines || []).map((l, i) => ({
+    jdt_num: j.JdtNum,
+    line_id: int(l.Line_ID) ?? i,
+    account_code: str(l.AccountCode),
+    short_name: str(l.ShortName),
+    debit: num(l.Debit),
+    credit: num(l.Credit),
+    line_memo: str(l.LineMemo),
+    project_code: str(l.ProjectCode),
+    contra_account: str(l.ContraAccount),
+    reference1: str(l.Reference1),
+    reference2: str(l.Reference2),
+    costing_code: str(l.CostingCode),
+  }));
+  const header = {
+    jdt_num: j.JdtNum,
+    number: int(j.Number),
+    reference_date: date(j.ReferenceDate),
+    due_date: date(j.DueDate),
+    tax_date: date(j.TaxDate),
+    memo: str(j.Memo),
+    reference1: str(j.Reference),
+    reference2: str(j.Reference2),
+    reference3: str(j.Reference3),
+    transaction_code: str(j.TransactionCode),
+    project_code: str(j.ProjectCode),
+    origin_type: str(j.OriginalJournal),
+    origin_ref: str(j.BaseReference ?? j.Original),
+    total_debit: lines.reduce((n, l) => n + (l.debit || 0), 0),
+    raw_data: JSON.stringify(compact(j)),
+  };
+  return { header, lines };
+}
+
+/** Document entities, synced by key (DocEntry unless keyField says otherwise). Order = slice order. */
 const DOC_ENTITIES = [
   { key: 'field_tickets', path: 'CRCS_oFieldTicket', table: 'field_tickets', linesTable: 'field_ticket_lines',
     cols: FT_COLS, lineCols: FTL_COLS, lineKey: ['doc_entry', 'line_type', 'line_id'], map: mapFieldTicket },
@@ -313,6 +416,17 @@ const DOC_ENTITIES = [
     cols: AR_COLS, lineCols: ARL_COLS, lineKey: ['doc_entry', 'line_num'], map: mapArDocument, select: AR_SELECT },
   { key: 'delivery_notes', path: 'DeliveryNotes', table: 'delivery_notes', linesTable: 'delivery_note_lines',
     cols: AR_COLS, lineCols: ARL_COLS, lineKey: ['doc_entry', 'line_num'], map: mapArDocument, select: AR_SELECT },
+  { key: 'ap_invoices', path: 'PurchaseInvoices', table: 'ap_invoices', linesTable: 'ap_invoice_lines',
+    cols: AP_COLS, lineCols: APL_COLS, lineKey: ['doc_entry', 'line_num'], map: mapApDocument, select: AR_SELECT },
+  { key: 'ap_credit_memos', path: 'PurchaseCreditNotes', table: 'ap_credit_memos', linesTable: 'ap_credit_memo_lines',
+    cols: AP_COLS, lineCols: APL_COLS, lineKey: ['doc_entry', 'line_num'], map: mapApDocument, select: AR_SELECT },
+  { key: 'incoming_payments', path: 'IncomingPayments', table: 'incoming_payments', linesTable: 'incoming_payment_invoices',
+    cols: PAY_COLS, lineCols: PAYL_COLS, lineKey: ['doc_entry', 'line_num'], map: mapPayment, select: PAY_SELECT, changes: false },
+  { key: 'vendor_payments', path: 'VendorPayments', table: 'vendor_payments', linesTable: 'vendor_payment_invoices',
+    cols: PAY_COLS, lineCols: PAYL_COLS, lineKey: ['doc_entry', 'line_num'], map: mapPayment, select: PAY_SELECT, changes: false },
+  { key: 'journal_entries', path: 'JournalEntries', table: 'journal_entries', linesTable: 'journal_entry_lines',
+    keyField: 'JdtNum', keyCol: 'jdt_num',
+    cols: JE_COLS, lineCols: JEL_COLS, lineKey: ['jdt_num', 'line_id'], map: mapJournalEntry, select: JE_SELECT, changes: false },
 ];
 
 // ── Service Layer client ─────────────────────────────────────────────────────
@@ -410,10 +524,10 @@ class ServiceLayer {
     throw lastErr || new Error('SAP request failed after retries');
   }
 
-  /** One keyset page: DocEntry > after, ascending. */
-  async page(path, { after, top, filter, select }) {
-    const parts = [`$filter=${encodeURIComponent(`DocEntry gt ${after}${filter ? ` and ${filter}` : ''}`)}`,
-      `$orderby=${encodeURIComponent('DocEntry asc')}`, `$top=${top}`];
+  /** One keyset page: <key> > after, ascending. */
+  async page(path, { after, top, filter, select, key = 'DocEntry' }) {
+    const parts = [`$filter=${encodeURIComponent(`${key} gt ${after}${filter ? ` and ${filter}` : ''}`)}`,
+      `$orderby=${encodeURIComponent(`${key} asc`)}`, `$top=${top}`];
     if (select) parts.push(`$select=${select}`);
     const json = await this.get(`${path}?${parts.join('&')}`, { headers: { Prefer: `odata.maxpagesize=${top}` } });
     return json?.value || [];
@@ -486,7 +600,7 @@ class SapB1History {
     for (;;) {
       try {
         const select = spec.select && !this.selectBroken.has(spec.key) ? spec.select : null;
-        const rows = await this.sl.page(spec.path, { after, top, filter, select });
+        const rows = await this.sl.page(spec.path, { after, top, filter, select, key: spec.keyField });
         this.pageSizes[spec.key] = top;
         return rows;
       } catch (err) {
@@ -517,9 +631,10 @@ class SapB1History {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      await bulkUpsert(client, `${SCHEMA}.${spec.table}`, spec.cols, dedupe(headers, ['doc_entry']), ['doc_entry'], { touch: true });
-      const entries = headers.map((h) => h.doc_entry);
-      await client.query(`DELETE FROM ${SCHEMA}.${spec.linesTable} WHERE doc_entry = ANY($1::int[])`, [entries]);
+      const key = spec.keyCol || 'doc_entry';
+      await bulkUpsert(client, `${SCHEMA}.${spec.table}`, spec.cols, dedupe(headers, [key]), [key], { touch: true });
+      const entries = headers.map((h) => h[key]);
+      await client.query(`DELETE FROM ${SCHEMA}.${spec.linesTable} WHERE ${key} = ANY($1::int[])`, [entries]);
       await bulkUpsert(client, `${SCHEMA}.${spec.linesTable}`, spec.lineCols, dedupe(lines, spec.lineKey), spec.lineKey);
       const maxEntry = Math.max(...entries);
       await client.query(
@@ -616,6 +731,37 @@ class SapB1History {
     return { business_partners: bps.length, projects: projects.length };
   }
 
+  async refreshAccounts() {
+    const accounts = await this.sl.all('ChartOfAccounts');
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await bulkUpsert(
+        client, `${SCHEMA}.chart_of_accounts`,
+        ['code', 'name', 'account_type', 'active', 'postable', 'father_account', 'raw_data'],
+        dedupe(accounts.filter((a) => a.Code).map((a) => ({
+          code: a.Code, name: str(a.Name), account_type: str(a.AccountType),
+          active: a.FrozenFor !== 'tYES', postable: a.ActiveAccount === 'tYES', father_account: str(a.FatherAccountKey),
+          raw_data: JSON.stringify(compact(a)),
+        })), ['code']),
+        ['code'], { touch: true }
+      );
+      await client.query(
+        `INSERT INTO ${SCHEMA}.sync_state (entity, backfill_complete, backfill_completed_at, rows_synced, last_run_at, last_status)
+         VALUES ('chart_of_accounts', TRUE, NOW(), $1, NOW(), 'ok')
+         ON CONFLICT (entity) DO UPDATE SET rows_synced = EXCLUDED.rows_synced, last_run_at = NOW(), last_status = 'ok', last_error = NULL`,
+        [accounts.length]
+      );
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+    return accounts.length;
+  }
+
   /**
    * One scheduled run. While any backfill is unfinished this keeps cycling
    * through the entities a slice at a time until all are caught up, calling
@@ -626,12 +772,19 @@ class SapB1History {
     await this.pool.query(`CREATE SCHEMA IF NOT EXISTS ${SCHEMA}`);
     const summary = {};
     try {
-      const refState = await this.pool
-        .query(`SELECT last_run_at FROM ${SCHEMA}.sync_state WHERE entity = 'reference'`)
-        .then((r) => r.rows[0]);
-      if (!refState?.last_run_at || Date.now() - new Date(refState.last_run_at).getTime() > 20 * 3600000) {
+      const lastRun = await this.pool
+        .query(`SELECT entity, last_run_at FROM ${SCHEMA}.sync_state WHERE entity IN ('reference', 'chart_of_accounts')`)
+        .then((r) => Object.fromEntries(r.rows.map((s) => [s.entity, s.last_run_at])));
+      const stale = (entity) => !lastRun[entity] || Date.now() - new Date(lastRun[entity]).getTime() > 20 * 3600000;
+      if (stale('reference')) {
         summary.reference = await this.refreshReference().catch((err) => {
           console.warn('[SAP B1] reference refresh failed:', err.message);
+          return { error: err.message };
+        });
+      }
+      if (stale('chart_of_accounts')) {
+        summary.chart_of_accounts = await this.refreshAccounts().catch((err) => {
+          console.warn('[SAP B1] chart of accounts refresh failed:', err.message);
           return { error: err.message };
         });
       }
@@ -654,7 +807,7 @@ class SapB1History {
                 [spec.key]
               );
               console.log(`[SAP B1] ${spec.key}: backfill complete`);
-            } else {
+            } else if (spec.changes !== false) {
               summary[`${spec.key}_changed`] = await this.pullChanges(spec).catch((err) => {
                 // UpdateDate filtering is optional — new documents still flow.
                 console.warn(`[SAP B1] ${spec.key} change pass failed: ${err.message}`);
@@ -695,13 +848,48 @@ class SapB1History {
   }
 }
 
+// ── catalog for prompts ──────────────────────────────────────────────────────
+// Built from the tables that actually exist so every sap_b1 table is offered
+// to the IPS agent and the master, including ones added after this was written.
+let tableCatalog = [];
+
+async function refreshTableCatalog(pool) {
+  const { rows } = await pool.query(
+    `SELECT c.relname AS name, GREATEST(c.reltuples, 0)::bigint AS approx_rows
+       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = '${SCHEMA}' AND c.relkind IN ('r', 'p')
+      ORDER BY c.relname`
+  );
+  tableCatalog = rows.map((r) => ({ name: `${SCHEMA}.${r.name}`, approxRows: Number(r.approx_rows) }));
+  return tableCatalog;
+}
+
+function catalogText() {
+  const tables = tableCatalog.length
+    ? tableCatalog.map((t) => `${t.name}${t.approxRows > 0 ? ` (~${t.approxRows.toLocaleString()})` : ''}`).join(', ')
+    : 'sap_b1.field_tickets, field_ticket_lines, ar_invoices, ar_invoice_lines, ar_credit_memos, ar_credit_memo_lines, delivery_notes, delivery_note_lines, ap_invoices, ap_invoice_lines, ap_credit_memos, ap_credit_memo_lines, incoming_payments, incoming_payment_invoices, vendor_payments, vendor_payment_invoices, journal_entries, journal_entry_lines, chart_of_accounts, business_partners, projects, sync_state';
+  return `ALL of these SAP B1 tables are queryable (pass the exact table name as the hint): ${tables}.
+  How they connect:
+    Field tickets → billing: ar_invoice_lines.field_ticket_doc_num = field_tickets.doc_num (same on delivery_note_lines); delivered tickets reach the invoice via ar_invoice_lines.base_type = 15 and base_entry = delivery_notes.doc_entry.
+    Customers and vendors: business_partners.card_code = ar_*.customer_code = ap_*.vendor_code = *_payments.card_code = journal_entry_lines.short_name (card_type cCustomer / cSupplier).
+    Vendor spend: ap_invoices (+ ap_invoice_lines.account_code → chart_of_accounts.code for the expense account) minus ap_credit_memos; vendor_payments shows cash actually paid.
+    Payments → documents: incoming_payment_invoices / vendor_payment_invoices.invoice_doc_entry = ar_invoices / ap_invoices.doc_entry (invoice_type says which).
+    General ledger: journal_entry_lines (debit, credit, account_code → chart_of_accounts.code) joined to journal_entries on jdt_num; origin_type names the source document type.
+  sync_state shows backfill progress per entity. If backfill_complete is false or an entity has no row yet, say that part of the history is still loading and give the range loaded so far — never conclude a record does not exist and never say B1 lacks that data.`;
+}
+
 /** Coverage summary for data-source listings: row counts and date span per table. */
 async function coverage(pool) {
   const { rows } = await pool.query(`
     SELECT 'field_tickets' AS entity, COUNT(*)::int AS rows, MIN(ticket_date)::text AS earliest, MAX(ticket_date)::text AS latest FROM sap_b1.field_tickets
     UNION ALL SELECT 'ar_invoices', COUNT(*)::int, MIN(doc_date)::text, MAX(doc_date)::text FROM sap_b1.ar_invoices
     UNION ALL SELECT 'ar_credit_memos', COUNT(*)::int, MIN(doc_date)::text, MAX(doc_date)::text FROM sap_b1.ar_credit_memos
-    UNION ALL SELECT 'delivery_notes', COUNT(*)::int, MIN(doc_date)::text, MAX(doc_date)::text FROM sap_b1.delivery_notes`);
+    UNION ALL SELECT 'delivery_notes', COUNT(*)::int, MIN(doc_date)::text, MAX(doc_date)::text FROM sap_b1.delivery_notes
+    UNION ALL SELECT 'ap_invoices', COUNT(*)::int, MIN(doc_date)::text, MAX(doc_date)::text FROM sap_b1.ap_invoices
+    UNION ALL SELECT 'ap_credit_memos', COUNT(*)::int, MIN(doc_date)::text, MAX(doc_date)::text FROM sap_b1.ap_credit_memos
+    UNION ALL SELECT 'incoming_payments', COUNT(*)::int, MIN(doc_date)::text, MAX(doc_date)::text FROM sap_b1.incoming_payments
+    UNION ALL SELECT 'vendor_payments', COUNT(*)::int, MIN(doc_date)::text, MAX(doc_date)::text FROM sap_b1.vendor_payments
+    UNION ALL SELECT 'journal_entries', COUNT(*)::int, MIN(reference_date)::text, MAX(reference_date)::text FROM sap_b1.journal_entries`);
   const state = await pool.query(`SELECT entity, backfill_complete, last_run_at FROM sap_b1.sync_state`);
   const byEntity = Object.fromEntries(state.rows.map((s) => [s.entity, s]));
   return rows.map((r) => ({
@@ -711,4 +899,7 @@ async function coverage(pool) {
   }));
 }
 
-module.exports = { SapB1History, ServiceLayer, isConfigured, coverage, mapFieldTicket, mapArDocument, DOC_ENTITIES, bulkUpsert, isDbDown };
+module.exports = {
+  SapB1History, ServiceLayer, isConfigured, coverage, refreshTableCatalog, catalogText,
+  mapFieldTicket, mapArDocument, mapApDocument, mapPayment, mapJournalEntry, DOC_ENTITIES, bulkUpsert, isDbDown,
+};

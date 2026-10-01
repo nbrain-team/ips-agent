@@ -28,7 +28,7 @@ const DESCRIPTION =
 const PROMPT_FRAGMENT = `IPS, Inc. (Ingram Professional Services) is an oilfield electrical services contractor established 2012, serving Southeast New Mexico, Midland TX, and the Permian Basin. Offices in Hobbs NM, Loving NM, and Midland TX. Services: oil & gas electrical, automation & control (PLC, SCADA, custody transfer), oilfield fiber optics, powerline construction, hydro excavation, and safety services.
 
 Data routing for IPS questions:
-- Billing verification (recent field tickets, exceptions, open invoices), customers, fleet and Motive GPS, payroll and Paycom hours, JSA safety records, crews → ips.query_billing_database. Field-ticket and invoice HISTORY follows the systems-of-record section below.
+- Billing verification (recent field tickets, exceptions, open invoices), customers, fleet and Motive GPS, payroll and Paycom hours, JSA safety records, crews → ips.query_billing_database. Field-ticket, invoice, vendor-spend, payment and general-ledger HISTORY follows the systems-of-record section below.
 - Ramp corporate cards and spend (card transactions, cardholders, cards, spend limits, bills, reimbursement trips, vendors, GL coding) → ips.query_operational_database with a hint naming the ramp table: ramp.transactions, ramp.users, ramp.cards, ramp.limits, ramp.bills, ramp.trips, ramp.vendors, ramp.accounting_gl_accounts. This is IPS's Ramp account only — Studio Golf's Ramp is a separate account and is never in IPS data.
 - Company information, services, safety procedures, policies, SOPs, and ingested documents → ips.hybrid_search.
 - Meeting transcripts (Read.ai and Otter) live in the IPS knowledge base — reach them via ips.hybrid_search, or ips.query_operational_database when filtering by date or participant.
@@ -50,17 +50,13 @@ If a billing result looks implausible (zero rows where you expect data, or a tab
 
 The pilot billing customer is Mewbourne Oil Co. IPS uses "field ticket" (not work order) and "JSA" for job safety analysis.`;
 
-const B1_HISTORY = `- 2017 → July 31, 2026: SAP Business One (IPS moved to SAP S/4HANA on August 1, 2026). The B1 history is in the sap_b1 schema → ips.query_operational_database with hint sap_b1.<table> (always the exact table name):
-    sap_b1.field_tickets (doc_num, ticket_date, customer, job_code, totals, approval, billed_doc_nums), sap_b1.field_ticket_lines (labor hours by employee, equipment, materials),
-    sap_b1.ar_invoices / ar_invoice_lines, sap_b1.ar_credit_memos / ar_credit_memo_lines, sap_b1.delivery_notes / delivery_note_lines, sap_b1.business_partners, sap_b1.projects.
-  Ticket → billing: ar_invoice_lines.field_ticket_doc_num = field_tickets.doc_num (same link on delivery_note_lines). Early tickets were billed through a delivery note first; the invoice line then points at it with base_type = 15 and base_entry = delivery_notes.doc_entry.
-  sap_b1.sync_state shows backfill progress. If backfill_complete is false for an entity, say the history is still loading and give the date range loaded so far — never conclude a record does not exist.
-  Copied so far: receivables and field-ticket documents only. B1 also holds AP (purchase invoices / vendor bills), payments and GL journal entries, but those are not copied yet — say they are not loaded, never that B1 lacks them.`;
+const b1History = () => `- 2017 → July 31, 2026: SAP Business One (IPS moved to SAP S/4HANA on August 1, 2026). The B1 history — field tickets, receivables, payables, payments, and the general ledger — is in the sap_b1 schema → ips.query_operational_database.
+  ${require('../agentic/services/sapB1History').catalogText()}`;
 
 const B1_NOT_CONNECTED = `- 2017 → July 31, 2026: SAP Business One (S/4HANA from August 1, 2026). The full B1 history is NOT connected yet. For anything before mid-2025, say the B1 history is not yet available — never conclude a record does not exist.`;
 
 function systemsOfRecord() {
-  const b1 = require('../agentic/services/sapB1History').isConfigured() ? B1_HISTORY : B1_NOT_CONNECTED;
+  const b1 = require('../agentic/services/sapB1History').isConfigured() ? b1History() : B1_NOT_CONNECTED;
   return `IPS systems of record over time — pick the source by date:
 ${b1}
 - Feb 2026 onward: FieldVu Cloud on SAP S/4HANA (new customer numbering, S/4 billing documents; it ran alongside B1 until the August 1, 2026 cutover). Stored in fieldvu.field_tickets (ips.query_operational_database), or live via ips.query_fieldvu. FieldVu is NOT B1 — never label FieldVu results as B1, and never infer B1's start date from FieldVu.
@@ -132,6 +128,7 @@ function buildDataSources(dbPool, billingDbPool) {
     }
 
     if (require('../agentic/services/sapB1History').isConfigured()) {
+      await require('../agentic/services/sapB1History').refreshTableCatalog(dbPool).catch(() => {});
       const cov = await require('../agentic/services/sapB1History').coverage(dbPool).catch(() => null);
       const describe = (c) =>
         `${c.entity} ${c.rows.toLocaleString()}${c.rows ? ` (${c.earliest} → ${c.latest})` : ''}${c.backfill_complete ? '' : ' loading'}`;

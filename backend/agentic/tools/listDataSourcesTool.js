@@ -120,7 +120,7 @@ Present the result as a SIMPLE, friendly list (source name — one-line descript
         const coverage = await sapB1.coverage(db).catch(() => []);
         sources.push({
           source: 'SAP Business One history (2017 → July 31, 2026; S/4HANA from August 1, 2026)',
-          what: 'The complete legacy SAP B1 record — field tickets with labor/equipment/material lines, A/R invoices, credit memos, delivery notes, customers and projects — synced hourly, queryable via query_operational_database (sap_b1.* tables)',
+          what: 'The complete legacy SAP B1 record — field tickets with labor/equipment/material lines, A/R invoices, credit memos and delivery notes, A/P invoices and credit memos (vendor spend), incoming and vendor payments, journal entries and the chart of accounts, customers/vendors and projects — synced hourly, queryable via query_operational_database (every sap_b1.* table)',
           coverage,
         });
       }

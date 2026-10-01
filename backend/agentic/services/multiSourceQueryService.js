@@ -267,6 +267,19 @@ QUESTION: ${question}`;
     let sql = null;
     try {
       let relevant = await this.tableRouter.discoverRelevantTables(question, { limit: 6, hint });
+      // A hint naming a real table wins even before that table is profiled;
+      // otherwise the router answers from the nearest profiled lookalike.
+      if (hint) {
+        const live = new Set(await this.getAllTables());
+        const named = String(hint)
+          .split(/[\s,]+/)
+          .map((h) => h.replace(/^public\./, '').replace(/["`]/g, ''))
+          .filter((h) => live.has(h) && !relevant.some((r) => r.table_name === h));
+        relevant = [
+          ...named.map((t) => ({ table_name: t, row_count: '?', columns_json: [], sample_rows_json: [] })),
+          ...relevant,
+        ].slice(0, Math.max(6, named.length));
+      }
       if (!relevant.length) {
         // Vectors not built yet — fall back to live table list with schema
         const tables = await this.getAllTables();

@@ -73,18 +73,19 @@ function dedupe(rows, keyCols) {
   return [...seen.values()];
 }
 
-/**
- * Multi-row INSERT … ON CONFLICT. Chunked under Postgres's 65,535-parameter
- * limit. `touch` adds synced_at = NOW() to the update for header tables.
- */
+// ips-db is a 256 MB instance: a statement carrying thousands of B1 lines with
+// their raw JSON gets the server OOM-killed, so statements stay small.
+const MAX_ROWS_PER_STATEMENT = 200;
+const MAX_BYTES_PER_STATEMENT = 1024 * 1024;
+
+/** Multi-row INSERT … ON CONFLICT. `touch` adds synced_at = NOW() to the update for header tables. */
 async function bulkUpsert(client, table, cols, rows, conflictCols, { touch = false } = {}) {
   if (!rows.length) return;
-  const perChunk = Math.max(1, Math.floor(60000 / cols.length));
   const updates = cols.filter((c) => !conflictCols.includes(c)).map((c) => `${c} = EXCLUDED.${c}`);
   if (touch) updates.push('synced_at = NOW()');
   const onConflict = updates.length ? `DO UPDATE SET ${updates.join(', ')}` : 'DO NOTHING';
-  for (let i = 0; i < rows.length; i += perChunk) {
-    const chunk = rows.slice(i, i + perChunk);
+
+  const flush = async (chunk) => {
     const params = [];
     const tuples = chunk.map(
       (r) =>
@@ -100,8 +101,33 @@ async function bulkUpsert(client, table, cols, rows, conflictCols, { touch = fal
        ON CONFLICT (${conflictCols.join(',')}) ${onConflict}`,
       params
     );
+  };
+
+  let chunk = [];
+  let bytes = 0;
+  for (const r of rows) {
+    const size = cols.reduce((n, c) => n + (r[c] === null || r[c] === undefined ? 0 : String(r[c]).length), 0);
+    if (chunk.length && (chunk.length >= MAX_ROWS_PER_STATEMENT || bytes + size > MAX_BYTES_PER_STATEMENT)) {
+      await flush(chunk);
+      chunk = [];
+      bytes = 0;
+    }
+    chunk.push(r);
+    bytes += size;
   }
+  if (chunk.length) await flush(chunk);
 }
+
+/** The database dropped the connection or is restarting (as opposed to a bad query). */
+function isDbDown(err) {
+  return /terminated unexpectedly|recovery mode|starting up|shutting down|ECONNRESET|ECONNREFUSED|Connection terminated/i.test(
+    String(err && err.message)
+  );
+}
+
+// Page sizes outlive a single run so a page that crashed the database is not
+// retried at full size every hour.
+const PAGE_SIZES = {};
 
 // ── mappers ──────────────────────────────────────────────────────────────────
 const FT_COLS = [
@@ -416,7 +442,20 @@ class SapB1History {
     this.pageSize = parseInt(process.env.SAP_B1_PAGE_SIZE || '100', 10);
     this.sliceMs = parseFloat(process.env.SAP_B1_SLICE_MIN || '5') * 60000;
     this.selectBroken = new Set();
-    this.pageSizes = {};
+    this.pageSizes = PAGE_SIZES;
+  }
+
+  /** Wait for the database to accept queries again after a crash. */
+  async waitForDb(maxMs = 5 * 60000) {
+    const until = Date.now() + maxMs;
+    while (Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 15000));
+      try {
+        await this.pool.query('SELECT 1');
+        return;
+      } catch (_e) { /* still recovering */ }
+    }
+    throw new Error('database did not come back within 5 minutes');
   }
 
   async state(entity) {
@@ -510,6 +549,8 @@ class SapB1History {
       const rows = await this.fetchPage(spec, cursor);
       if (!rows.length) return true;
       cursor = await this.storePage(spec, rows, { advanceCursor: true });
+      const top = this.pageSizes[spec.key];
+      if (top && top < this.pageSize) this.pageSizes[spec.key] = Math.min(this.pageSize, Math.ceil(top * 1.1));
     }
     return false;
   }
@@ -623,6 +664,13 @@ class SapB1History {
             await this.markRun(spec.key, 'ok');
           } catch (err) {
             console.warn(`[SAP B1] ${spec.key} failed: ${err.message}`);
+            if (isDbDown(err)) {
+              const top = this.pageSizes[spec.key] || this.pageSize;
+              this.pageSizes[spec.key] = Math.max(1, Math.floor(top / 4));
+              console.warn(`[SAP B1] database dropped during ${spec.key}; waiting for it, then retrying at ${this.pageSizes[spec.key]} documents per page`);
+              await this.waitForDb();
+              if (top > 1) stillPending.push(spec);
+            }
             await this.markRun(spec.key, 'error', err.message);
           }
         }
@@ -663,4 +711,4 @@ async function coverage(pool) {
   }));
 }
 
-module.exports = { SapB1History, ServiceLayer, isConfigured, coverage, mapFieldTicket, mapArDocument, DOC_ENTITIES };
+module.exports = { SapB1History, ServiceLayer, isConfigured, coverage, mapFieldTicket, mapArDocument, DOC_ENTITIES, bulkUpsert, isDbDown };

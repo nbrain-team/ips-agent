@@ -50,19 +50,20 @@ If a billing result looks implausible (zero rows where you expect data, or a tab
 
 The pilot billing customer is Mewbourne Oil Co. IPS uses "field ticket" (not work order) and "JSA" for job safety analysis.`;
 
-const B1_HISTORY = `- July 2017 → 2026 S/4HANA cutover: SAP Business One. The COMPLETE B1 history is in the sap_b1 schema → ips.query_operational_database with hint sap_b1.<table>:
+const B1_HISTORY = `- 2017 → July 31, 2026: SAP Business One (IPS moved to SAP S/4HANA on August 1, 2026). The B1 history is in the sap_b1 schema → ips.query_operational_database with hint sap_b1.<table> (always the exact table name):
     sap_b1.field_tickets (doc_num, ticket_date, customer, job_code, totals, approval, billed_doc_nums), sap_b1.field_ticket_lines (labor hours by employee, equipment, materials),
     sap_b1.ar_invoices / ar_invoice_lines, sap_b1.ar_credit_memos / ar_credit_memo_lines, sap_b1.delivery_notes / delivery_note_lines, sap_b1.business_partners, sap_b1.projects.
   Ticket → billing: ar_invoice_lines.field_ticket_doc_num = field_tickets.doc_num (same link on delivery_note_lines). Early tickets were billed through a delivery note first; the invoice line then points at it with base_type = 15 and base_entry = delivery_notes.doc_entry.
-  sap_b1.sync_state shows backfill progress. If backfill_complete is false for an entity, say the history is still loading and give the date range loaded so far — never conclude a record does not exist.`;
+  sap_b1.sync_state shows backfill progress. If backfill_complete is false for an entity, say the history is still loading and give the date range loaded so far — never conclude a record does not exist.
+  Copied so far: receivables and field-ticket documents only. B1 also holds AP (purchase invoices / vendor bills), payments and GL journal entries, but those are not copied yet — say they are not loaded, never that B1 lacks them.`;
 
-const B1_NOT_CONNECTED = `- July 2017 → 2026 S/4HANA cutover: SAP Business One. The full B1 history is NOT connected yet. For anything before mid-2025, say the B1 history is not yet available — never conclude a record does not exist.`;
+const B1_NOT_CONNECTED = `- 2017 → July 31, 2026: SAP Business One (S/4HANA from August 1, 2026). The full B1 history is NOT connected yet. For anything before mid-2025, say the B1 history is not yet available — never conclude a record does not exist.`;
 
 function systemsOfRecord() {
   const b1 = require('../agentic/services/sapB1History').isConfigured() ? B1_HISTORY : B1_NOT_CONNECTED;
   return `IPS systems of record over time — pick the source by date:
 ${b1}
-- Feb 2026 onward: FieldVu Cloud on SAP S/4HANA (new customer numbering, S/4 billing documents). Stored in fieldvu.field_tickets (ips.query_operational_database), or live via ips.query_fieldvu. FieldVu is NOT B1 — never label FieldVu results as B1, and never infer B1's start date from FieldVu.
+- Feb 2026 onward: FieldVu Cloud on SAP S/4HANA (new customer numbering, S/4 billing documents; it ran alongside B1 until the August 1, 2026 cutover). Stored in fieldvu.field_tickets (ips.query_operational_database), or live via ips.query_fieldvu. FieldVu is NOT B1 — never label FieldVu results as B1, and never infer B1's start date from FieldVu.
 - The two overlap during the 2026 transition with different numbering. Report them side by side; do not add their counts together.
 - ips_cb (query_billing_database) holds only the recent tickets the billing platform verifies (June 2025 onward) and open invoices. Use it for verification, exceptions, GPS/payroll/JSA checks — not for history.`;
 }

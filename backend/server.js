@@ -401,15 +401,17 @@ async function start() {
       try {
         console.log(`🗄️  SAP B1 history sync starting (${reason})...`);
         await new sapB1.SapB1History(dbPool).run({ onRound: reprofile });
-        await reprofile();
         console.log('🗄️  SAP B1 history sync done');
       } catch (err) {
         console.warn('SAP B1 history sync failed:', err.message);
         recordFailure(dbPool, { source: 'sap_b1_sync', reference: reason, error: err.message }).catch(() => {});
       } finally {
+        // Whatever loaded must stay queryable even when a run fails part-way.
+        await reprofile().catch((err) => console.warn('SAP B1 table profiling failed:', err.message));
         sapRunning = false;
       }
     };
+    setTimeout(() => reprofile().catch((err) => console.warn('SAP B1 table profiling failed:', err.message)), 30000);
     setTimeout(() => runSap('boot'), 2 * 60000);
     const sapEveryMin = parseInt(process.env.SAP_B1_SYNC_INTERVAL_MIN || '60', 10);
     setInterval(() => runSap('scheduled'), sapEveryMin * 60000);

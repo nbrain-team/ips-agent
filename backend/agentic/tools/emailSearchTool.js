@@ -67,46 +67,76 @@ If a non-admin asks about someone else's email, explain that only admins can do 
       // Visibility scope — the load-bearing line
       if (!isAdmin) {
         args.push(ownEmail);
-        where.push(`mailbox_email = $${args.length}`);
+        where.push(`e.mailbox_email = $${args.length}`);
       } else if (params.mailbox) {
         args.push(params.mailbox.toLowerCase());
-        where.push(`mailbox_email = $${args.length}`);
+        where.push(`e.mailbox_email = $${args.length}`);
       }
 
       // Retention decision: synced mail stays searchable (no pruning) — the
       // window just defaults to 30d and can widen to a year on request.
       const sinceDays = Math.min(Math.max(1, params.since_days || 30), 365);
       args.push(String(sinceDays));
-      where.push(`received_at > NOW() - ($${args.length} || ' days')::interval`);
+      where.push(`e.received_at > NOW() - ($${args.length} || ' days')::interval`);
 
       if (params.from_address) {
         args.push(`%${params.from_address.toLowerCase()}%`);
-        where.push(`from_address LIKE $${args.length}`);
-      }
-
-      let rankSelect = '0 AS rank';
-      if (params.query && params.query.trim()) {
-        args.push(params.query.trim());
-        rankSelect = `ts_rank(fts, plainto_tsquery('english', $${args.length})) AS rank`;
-        where.push(
-          `(fts @@ plainto_tsquery('english', $${args.length}) OR subject ILIKE '%' || $${args.length} || '%'
-            OR e.ms_message_id IN (
-              SELECT ms_message_id FROM ms_email_attachments
-              WHERE to_tsvector('english', COALESCE(filename, '') || ' ' || COALESCE(text_content, ''))
-                    @@ plainto_tsquery('english', $${args.length})))`
-        );
+        where.push(`e.from_address LIKE $${args.length}`);
       }
 
       const limit = Math.min(Math.max(1, params.limit || 15), 50);
-      args.push(limit);
+      const query = params.query && params.query.trim();
+      let sql;
 
-      const sql = `
-        SELECT e.ms_message_id, e.mailbox_email, e.subject, e.from_name, e.from_address, e.to_addresses,
-               e.received_at, e.has_attachments, e.body_text, e.web_link, ${rankSelect}
-        FROM ms_emails e
-        WHERE ${where.join(' AND ')}
-        ORDER BY ${params.query ? 'rank DESC,' : ''} received_at DESC
-        LIMIT $${args.length}`;
+      if (!query) {
+        args.push(limit);
+        sql = `
+          SELECT e.ms_message_id, e.mailbox_email, e.subject, e.from_name, e.from_address, e.to_addresses,
+                 e.received_at, e.has_attachments, e.body_text, e.web_link, 0 AS rank
+          FROM ms_emails e
+          WHERE ${where.join(' AND ')}
+          ORDER BY e.received_at DESC
+          LIMIT $${args.length}`;
+      } else {
+        // One OR across body, subject and an attachment subquery defeated every
+        // index: 283k messages a year, and a 14-day search took 9s and timed
+        // out the master's call. Each branch here is index-driven and capped,
+        // then merged. `fts` already covers subject, sender and body, so the
+        // subject substring branch only runs for identifier-like terms
+        // (ticket and PO numbers) that the English parser splits apart; as a
+        // sequential scan it costs ~2s on its own.
+        args.push(query);
+        const q = `$${args.length}`;
+        const scope = where.join(' AND ');
+        const branches = [
+          `SELECT e.ms_message_id FROM ms_emails e
+            WHERE ${scope} AND e.fts @@ plainto_tsquery('english', ${q})
+            ORDER BY e.received_at DESC LIMIT 1000`,
+          `SELECT e.ms_message_id FROM ms_email_attachments a
+             JOIN ms_emails e ON e.ms_message_id = a.ms_message_id
+            WHERE ${scope}
+              AND to_tsvector('english', COALESCE(a.filename, '') || ' ' || COALESCE(a.text_content, ''))
+                  @@ plainto_tsquery('english', ${q})
+            ORDER BY e.received_at DESC LIMIT 1000`,
+        ];
+        if (/[^A-Za-z\s]/.test(query)) {
+          branches.push(
+            `SELECT e.ms_message_id FROM ms_emails e
+              WHERE ${scope} AND e.subject ILIKE '%' || ${q} || '%'
+              ORDER BY e.received_at DESC LIMIT 1000`
+          );
+        }
+        args.push(limit);
+        sql = `
+          WITH hits AS (${branches.map((b) => `(${b})`).join(' UNION ')})
+          SELECT e.ms_message_id, e.mailbox_email, e.subject, e.from_name, e.from_address, e.to_addresses,
+                 e.received_at, e.has_attachments, e.body_text, e.web_link,
+                 ts_rank(e.fts, plainto_tsquery('english', ${q})) AS rank
+          FROM ms_emails e
+          JOIN hits h ON h.ms_message_id = e.ms_message_id
+          ORDER BY rank DESC, e.received_at DESC
+          LIMIT $${args.length}`;
+      }
 
       const result = await context.dbPool.query(sql, args);
 
@@ -141,10 +171,25 @@ If a non-admin asks about someone else's email, explain that only admins can do 
         link: r.web_link,
       }));
 
+      // The hourly sync can fail for days without anything downstream noticing:
+      // from Sep 27 an expired Graph secret froze every mailbox, and answers
+      // about "this week" quietly stopped at the 27th. Say so in the result.
+      let syncWarning;
+      try {
+        const fresh = await context.dbPool.query('SELECT MAX(received_at) AS newest FROM ms_emails');
+        const newest = fresh.rows[0] && fresh.rows[0].newest;
+        if (newest && Date.now() - new Date(newest).getTime() > 12 * 3600 * 1000) {
+          syncWarning =
+            `Mail sync is behind: the newest message in ANY synced mailbox is from ${new Date(newest).toISOString()}. ` +
+            'Nothing after that is searchable — tell the user their answer stops at that date.';
+        }
+      } catch (_e) { /* best-effort */ }
+
       return {
         success: true,
         data: rows,
-        summary: `${rows.length} email(s) found${!isAdmin ? ` in ${ownEmail}` : params.mailbox ? ` in ${params.mailbox}` : ' across all mailboxes'}`,
+        ...(syncWarning ? { sync_warning: syncWarning } : {}),
+        summary: `${rows.length} email(s) found${!isAdmin ? ` in ${ownEmail}` : params.mailbox ? ` in ${params.mailbox}` : ' across all mailboxes'}${syncWarning ? `. WARNING: ${syncWarning}` : ''}`,
         confidence: rows.length ? 0.9 : 0.4,
         source_type: 'email',
         source_summary: `M365 mail search (${sinceDays}d window)`,

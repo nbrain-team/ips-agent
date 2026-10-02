@@ -115,7 +115,6 @@ WHO IPS IS:
   midstream oil & gas (ONG) sectors.
 - Offices:
   - Hobbs, NM — 1612 W. Sanger, Hobbs, NM 88240 — 575.393.1417
-  - Loving, NM — 142-B Onsurez Rd, Loving, NM 88256 — 601.394.9953
   - Midland, TX — 4319 South CR 1270, Midland, TX 79706 — 432.235.7073
 - Proud member of NCMS, NMOGA (New Mexico Oil & Gas Association), and PEC.
 - Positioning lines used on the website: "Empowering Industries, Start to

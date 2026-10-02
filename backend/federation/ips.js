@@ -25,7 +25,7 @@ const DESCRIPTION =
  * its own output rules, and pasting 8KB of IPS instructions into a shared
  * prompt would fight with the other three agents' fragments.
  */
-const PROMPT_FRAGMENT = `IPS, Inc. (Ingram Professional Services) is an oilfield electrical services contractor established 2012, serving Southeast New Mexico, Midland TX, and the Permian Basin. Offices in Hobbs NM, Loving NM, and Midland TX. Services: oil & gas electrical, automation & control (PLC, SCADA, custody transfer), oilfield fiber optics, powerline construction, hydro excavation, and safety services.
+const PROMPT_FRAGMENT = `IPS, Inc. (Ingram Professional Services) is an oilfield electrical services contractor established 2012, serving Southeast New Mexico, Midland TX, and the Permian Basin. Offices in Hobbs NM and Midland TX (there is no longer a Loving NM office; fiber and automation run out of 800 Division/Hobbs, and safety & compliance is a corporate function spanning every division). Services: oil & gas electrical, automation & control (PLC, SCADA, custody transfer), oilfield fiber optics, powerline construction, hydro excavation, and safety services.
 
 Data routing for IPS questions:
 - Billing verification (recent field tickets, exceptions, open invoices), customers, fleet and Motive GPS, payroll and Paycom hours, JSA safety records, crews → ips.query_billing_database. Field-ticket, invoice, vendor-spend, payment and general-ledger HISTORY follows the systems-of-record section below.
@@ -75,9 +75,12 @@ const KIND_OVERRIDES = {
   // "execute" in the name reads as reason, which is correct, but be explicit:
   // this one runs arbitrary code and should never be mistaken for a data read.
   execute_python: { kind: 'reason', modality: 'text' },
-  // "create_document" and "generate_pdf" correctly infer write; named here so
-  // the set of writes IPS exposes is greppable in one place.
-  create_document: { kind: 'write', modality: 'text' },
+  // Drafts markdown into agent_artifacts and changes nothing else, so it is not
+  // a write. Labelled one, every document request queued for approval, and the
+  // approved run then hit the master's 45s default timeout mid-draft.
+  create_document: { kind: 'reason', modality: 'text', timeoutMs: 150000 },
+  // "generate_pdf" correctly infers write; named here so the set of writes IPS
+  // exposes is greppable in one place.
   generate_pdf: { kind: 'write', modality: 'pdf' },
   create_task: { kind: 'write', modality: 'table' },
   list_data_sources: { kind: 'read', modality: 'table' },
@@ -192,7 +195,12 @@ function createIpsFederationRouter({ dbPool, billingDbPool, getToolRegistry }) {
   const listTools = () => {
     const registry = getToolRegistry();
     if (!registry) return [];
-    return registry.getAll().map((tool) => ({ ...tool, ...(KIND_OVERRIDES[tool.name] || {}) }));
+    return registry
+      .getAll()
+      // A disabled tool still registers; offered to the master, it was picked
+      // and returned "Code execution is disabled" mid-answer.
+      .filter((tool) => tool.name !== 'execute_python' || clientConfig.isFeatureEnabled('code_execution'))
+      .map((tool) => ({ ...tool, ...(KIND_OVERRIDES[tool.name] || {}) }));
   };
 
   const executeTool = async (name, input, context) => {

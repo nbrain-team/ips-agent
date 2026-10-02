@@ -10,7 +10,7 @@ module.exports = {
   description: `Hybrid (semantic + keyword) search over the IPS knowledge base — website content, SOPs, safety manuals, and ingested documents. Best when EXACT terms matter (regulation names, equipment models, place names, proper nouns) as well as meaning.
 
 WHEN TO USE: company/service/safety/policy questions, especially with specific terminology.
-Examples: "NEC requirements referenced in our docs", "ISNetworld requirements", "Loving NM office details".`,
+Examples: "NEC requirements referenced in our docs", "ISNetworld requirements", "Hobbs NM office details".`,
   category: 'knowledge',
   requiresApproval: false,
   parameters: {

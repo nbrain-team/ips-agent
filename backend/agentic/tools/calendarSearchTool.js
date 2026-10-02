@@ -7,6 +7,26 @@
  */
 const msGraph = require('../services/msGraph');
 
+const TIMEZONE = process.env.BUSINESS_TIMEZONE || 'America/Chicago';
+
+/**
+ * A Graph event time as UTC plus a local reading that names its own zone.
+ *
+ * The times used to go out as bare wall-clock in Mountain time. The Ingram
+ * Brain reads federated times as Central, so every meeting came back an hour
+ * early ("Pre-Planning 2:30 PM CT" for a 3:30 PM CT meeting, Oct 2).
+ */
+function eventTime(t, allDay) {
+  if (!t?.dateTime) return { utc: null, local: null };
+  const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(t.dateTime) ? t.dateTime : `${t.dateTime}Z`);
+  if (allDay) return { utc: d.toISOString(), local: t.dateTime.slice(0, 10) };
+  const local = d.toLocaleString('en-US', {
+    timeZone: TIMEZONE, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  });
+  return { utc: d.toISOString(), local };
+}
+
 module.exports = {
   name: 'search_calendar',
   description: `Look up Microsoft 365 calendar events — meetings, appointments, schedules. Live query, always current.
@@ -70,7 +90,7 @@ PERMISSIONS (enforced automatically): regular users see ONLY their own calendar;
 
       let data;
       try {
-        data = await msGraph.graphGet(url, token, { Prefer: 'outlook.timezone="America/Denver"' });
+        data = await msGraph.graphGet(url, token, { Prefer: 'outlook.timezone="UTC"' });
       } catch (err) {
         if (err.status === 403) {
           return {
@@ -85,22 +105,29 @@ PERMISSIONS (enforced automatically): regular users see ONLY their own calendar;
 
       const events = (data.value || [])
         .filter((e) => !e.isCancelled)
-        .map((e) => ({
-          subject: e.subject,
-          start: e.start?.dateTime,
-          end: e.end?.dateTime,
-          all_day: !!e.isAllDay,
-          location: e.location?.displayName || null,
-          organizer: e.organizer?.emailAddress?.address || null,
-          attendees: (e.attendees || []).slice(0, 15).map((a) => a.emailAddress?.address).filter(Boolean),
-          online_meeting_url: e.onlineMeeting?.joinUrl || null,
-          preview: String(e.bodyPreview || '').slice(0, 300),
-        }));
+        .map((e) => {
+          const start = eventTime(e.start, e.isAllDay);
+          const end = eventTime(e.end, e.isAllDay);
+          return {
+            subject: e.subject,
+            start_utc: start.utc,
+            end_utc: end.utc,
+            start_local: start.local,
+            end_local: end.local,
+            all_day: !!e.isAllDay,
+            location: e.location?.displayName || null,
+            organizer: e.organizer?.emailAddress?.address || null,
+            attendees: (e.attendees || []).slice(0, 15).map((a) => a.emailAddress?.address).filter(Boolean),
+            online_meeting_url: e.onlineMeeting?.joinUrl || null,
+            preview: String(e.bodyPreview || '').slice(0, 300),
+          };
+        });
 
       return {
         success: true,
         data: events,
-        summary: `${events.length} calendar event(s) for ${target} (${daysBack}d back → ${daysAhead}d ahead)`,
+        summary: `${events.length} calendar event(s) for ${target} (${daysBack}d back → ${daysAhead}d ahead). ` +
+          `Quote start_local/end_local as written; each names its own time zone.`,
         confidence: 0.95,
         source_type: 'calendar',
         source_summary: `M365 calendar (live)`,

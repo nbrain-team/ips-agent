@@ -67,7 +67,7 @@ SAP B1 GENERAL LEDGER MATH (checked against IPS accounting's own B1 figures):
 - Dates: journal_entries.reference_date IS B1's posting date. due_date normally equals it. Filter periods on reference_date.
 - Year-end close: every 12/31 an entry with journal_entries.origin_type = 'ttClosingBalance' zeroes each revenue and expense account into retained earnings. Exclude 'ttClosingBalance' and 'ttOpeningBalance' from any period activity, total or P&L.
 - An account's activity for a period = SUM(debit - credit) for expenses, SUM(credit - debit) for revenue, closing entries excluded. Never sum debits alone or credits alone: credit memos, receipts and reversals post to the other side. (GL 541200-000 in 2025 = $2,836,051.30 net; debits alone overstate it by about $100K.)
-- "Balance as of 12/31/YYYY" on a revenue or expense account means that fiscal year's activity before the close, not the all-history running balance (which is $0 after every close). Balance-sheet accounts (FormatCode 1xxxxx-3xxxxx, account_type at_Other) are cumulative through the date.
+- "Balance as of 12/31/YYYY" on a revenue or expense account means that fiscal year's activity before the close (Jan 1 - Dec 31 of YYYY, closing entries excluded). Report that as the balance. Never lead with or offer an all-history sum for a revenue or expense account: with closing entries it is $0, without them it adds every year's activity together and means nothing. Balance-sheet accounts (FormatCode 1xxxxx-3xxxxx, account_type at_Other) are cumulative through the date.
 - Profit: revenue = accounts with account_type 'at_Revenues' (FormatCode 4xxxxx); expenses = 'at_Expenses' (5xxxxx job cost / COGS, 6xxxxx overhead, 8xxxxx other). Leave at_Other (balance sheet) out of any P&L. Gross profit = revenue - 5xxxxx; net = revenue - all expenses. Never compute revenue as "all credits".
 - Repair & maintenance is split: 541200-000 Job Cost Equipment R&M (job cost) and overhead accounts (620300-000 Auto R&M, 654300-000 Office/Building R&M). Show them separately; say which is included.
 - Profit center = division + location. journal_entry_lines.costing_code is the division ('100' = Electrical across all locations); journal_entry_lines.costing_code2 is the location ('HOB', 'MID', 'AND', 'LBK', 'ELP', 'DAL'). "100HOB" / "100 HOB" / "Hobbs electrical" = costing_code '100' AND costing_code2 'HOB'. If costing_code2 is NULL for the period, the location split has not loaded yet: say so and offer the division-wide figure, labeled as all locations. On document lines (ar_invoice_lines, ar_credit_memo_lines, ap_invoice_lines, ap_credit_memo_lines, delivery_note_lines) the same values are raw_data->>'CostingCode' and raw_data->>'CostingCode2'.`;
@@ -102,7 +102,7 @@ const RAMP_NOTES = `RAMP (IPS corporate cards, schema ramp):
 
 const PAYCOM_NOTES = `PAYCOM EMPLOYEE MASTER (schema paycom, table paycom.employees, one row per person ever employed, work profile only):
 - Headcount today = COUNT(*) WHERE employee_status = 'A'. That is the number Paycom shows under Active Employees. Never count time punches as headcount.
-- Headcount as of a past date = hired (GREATEST(hire_date, rehire_date)) on or before the date AND (termination_date IS NULL OR termination_date > the date OR rehire_date > termination_date). Label it a reconstruction from hire and termination dates: Paycom's own figure for that day can differ by a few people.
+- Headcount as of a past date D = people employed on D: (GREATEST(hire_date, COALESCE(rehire_date, hire_date)) <= D AND (termination_date IS NULL OR termination_date >= D)) OR (hire_date <= D AND rehire_date > D AND previous_termination_date >= D). Someone terminated on D still worked that day. Label it a reconstruction from hire and termination dates and say Paycom's own Active report for that day is the authority; on 8/31/2026 the reconstruction gave 338 against Paycom's 342.
 - Division = department_code / department_description (100 Electrical, 200 Powerline, 300 Midland Overhead, 400 Hydrovac, 600 Hobbs Overhead, 800 Automation & Fiber, 900 Corporate, 1300 Officer). Location = location ("Hobbs Office", "Midland Office", "El Paso Office", "Corporate"). Manager = supervisor_primary. Title = position_title (falls back to business_title).
 - Tenure: CURRENT_DATE - GREATEST(hire_date, rehire_date). "Here 90 days" = at least 90 days since that date.
 - Licenses and roles (journeyman, apprentice, automation tech) are in position_title; match with ILIKE.
@@ -237,8 +237,8 @@ QUESTION: ${question}`;
 - Compute rankings, totals and counts in SQL (GROUP BY with SUM/COUNT, ORDER BY the measure) when the question asks for them, and add an ORDER BY that makes the sheet easy to read.`;
     }
     return `- Compute totals, rankings and counts IN SQL (GROUP BY with SUM/COUNT/AVG, ORDER BY the measure DESC) — never return raw rows for the reader to add up.
-- Aggregated results (GROUP BY or DISTINCT summaries): LIMIT ${MAX_ROWS_AGGREGATE} at most. When the question asks for all of them (e.g. every vendor ranked by spend), return every group up to that limit.
-- Raw row lists (one row per record): LIMIT ${MAX_ROWS}.`;
+- Aggregated results (GROUP BY or DISTINCT summaries): LIMIT ${MAX_ROWS_AGGREGATE + 1} at most. When the question asks for all of them (e.g. every vendor ranked by spend), return every group up to that limit.
+- Raw row lists (one row per record): LIMIT ${MAX_ROWS + 1}.`;
   }
 
   /**

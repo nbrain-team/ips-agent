@@ -364,7 +364,7 @@ const JE_COLS = [
 ];
 const JEL_COLS = [
   'jdt_num', 'line_id', 'account_code', 'short_name', 'debit', 'credit', 'line_memo', 'project_code',
-  'contra_account', 'reference1', 'reference2', 'costing_code',
+  'contra_account', 'reference1', 'reference2', 'costing_code', 'costing_code2', 'costing_code3',
 ];
 const JE_SELECT = [
   'JdtNum', 'Number', 'ReferenceDate', 'DueDate', 'TaxDate', 'Memo', 'Reference', 'Reference2', 'Reference3',
@@ -385,6 +385,8 @@ function mapJournalEntry(j) {
     reference1: str(l.Reference1),
     reference2: str(l.Reference2),
     costing_code: str(l.CostingCode),
+    costing_code2: str(l.CostingCode2),
+    costing_code3: str(l.CostingCode3),
   }));
   const header = {
     jdt_num: j.JdtNum,

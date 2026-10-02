@@ -60,7 +60,17 @@ const SAP_B1_JOIN_NOTES = `SAP B1 JOIN KEYS (tables in schema sap_b1):
 - Vendor payment to bill: vendor_payment_invoices.doc_entry = vendor_payments.doc_entry AND vendor_payment_invoices.invoice_doc_entry = ap_invoices.doc_entry AND vendor_payment_invoices.invoice_type = 'it_PurchaseInvoice' ('it_PurchaseCreditNote' links to ap_credit_memos).
 - Field ticket to invoice: ar_invoice_lines.field_ticket_doc_num = field_tickets.doc_num (same on delivery_note_lines).
 - Business partner code: ar_*.customer_code, ap_*.vendor_code, *_payments.card_code, business_partners.card_code.
-- cancelled / canceled are booleans: add "NOT cancelled" (field_tickets: "NOT canceled") unless cancelled documents are asked for.`;
+- cancelled / canceled are booleans: add "NOT cancelled" (field_tickets: "NOT canceled") unless cancelled documents are asked for.
+
+SAP B1 GENERAL LEDGER MATH (checked against IPS accounting's own B1 figures):
+- Account numbers: users write the FormatCode with a dash ("541200-000"). Match chart_of_accounts.raw_data->>'FormatCode' = '541200000'; journal_entry_lines.account_code is the internal _SYS code.
+- Dates: journal_entries.reference_date IS B1's posting date. due_date normally equals it. Filter periods on reference_date.
+- Year-end close: every 12/31 an entry with journal_entries.origin_type = 'ttClosingBalance' zeroes each revenue and expense account into retained earnings. Exclude 'ttClosingBalance' and 'ttOpeningBalance' from any period activity, total or P&L.
+- An account's activity for a period = SUM(debit - credit) for expenses, SUM(credit - debit) for revenue, closing entries excluded. Never sum debits alone or credits alone: credit memos, receipts and reversals post to the other side. (GL 541200-000 in 2025 = $2,836,051.30 net; debits alone overstate it by about $100K.)
+- "Balance as of 12/31/YYYY" on a revenue or expense account means that fiscal year's activity before the close, not the all-history running balance (which is $0 after every close). Balance-sheet accounts (FormatCode 1xxxxx-3xxxxx, account_type at_Other) are cumulative through the date.
+- Profit: revenue = accounts with account_type 'at_Revenues' (FormatCode 4xxxxx); expenses = 'at_Expenses' (5xxxxx job cost / COGS, 6xxxxx overhead, 8xxxxx other). Leave at_Other (balance sheet) out of any P&L. Gross profit = revenue - 5xxxxx; net = revenue - all expenses. Never compute revenue as "all credits".
+- Repair & maintenance is split: 541200-000 Job Cost Equipment R&M (job cost) and overhead accounts (620300-000 Auto R&M, 654300-000 Office/Building R&M). Show them separately; say which is included.
+- Profit center = division + location. journal_entry_lines.costing_code is the division ('100' = Electrical across all locations); journal_entry_lines.costing_code2 is the location ('HOB', 'MID', 'AND', 'LBK', 'ELP', 'DAL'). "100HOB" / "100 HOB" / "Hobbs electrical" = costing_code '100' AND costing_code2 'HOB'. If costing_code2 is NULL for the period, the location split has not loaded yet: say so and offer the division-wide figure, labeled as all locations. On document lines (ar_invoice_lines, ar_credit_memo_lines, ap_invoice_lines, ap_credit_memo_lines, delivery_note_lines) the same values are raw_data->>'CostingCode' and raw_data->>'CostingCode2'.`;
 
 const RAMP_PARTNERS = {
   transactions: ['users', 'cards', 'trips'],

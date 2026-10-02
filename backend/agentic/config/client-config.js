@@ -22,6 +22,8 @@
  *   Keep the MANDATORY TOOL USE rules and the ARTIFACTS spec unchanged.
  */
 
+const ipsDomain = require('./ipsDomainKnowledge');
+
 module.exports = {
   // ==========================================================================
   // CLIENT IDENTIFICATION
@@ -140,6 +142,14 @@ WHAT WE DO (SERVICES):
 - Safety Services (specialists, technicians, audits, monitoring equipment,
   permits, and training programs to meet industry safety and regulatory
   standards).
+
+${ipsDomain.SYSTEMS_OF_RECORD}
+
+${ipsDomain.DIVISIONS_AND_LOCATIONS}
+
+${ipsDomain.COVERAGE_GAPS}
+
+${ipsDomain.ANSWER_HABITS}
 
 BRAND VOICE & WRITING STYLE:
 - Professional, plain-spoken, and industrial. Safety-first and expertise-driven

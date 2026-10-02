@@ -867,8 +867,8 @@ Rewrite the answer fixing the flagged issues. Keep everything that is well-suppo
       dataLines.push(
         `- query_billing_database → the IPS Billing platform (READ-ONLY). This holds nearly ALL IPS business data:
   • Field tickets & billing: ips_cb.field_tickets, ips_cb.field_ticket_lines, ips_cb.invoices (SAP doc numbers, PO/AFE, totals, paid status), ips_cb.exceptions (AI-classified billing exceptions), ips_cb.customers (SAP card codes, portal type e.g. Ariba)
-  • Fleet/GPS (Motive): ips_cb.motive_driving_periods (vehicle_unit, driver_name, origins/destinations, miles), ips_cb.gps_snapshots
-  • Payroll/time (Paycom): paycom_time_entries, ips_cb.payroll_dsr_truth (GPS vs DSR minutes by crew/day)
+  • Fleet/GPS (Motive): ips_cb.motive_driving_periods (vehicle_unit, driver_name, origins/destinations, miles; Jul 6, 2026 onward, active units only), ips_cb.gps_snapshots
+  • Payroll/time (Paycom): paycom_time_entries, ips_cb.payroll_dsr_truth (GPS vs DSR minutes by crew/day). Time punches only — not the Paycom employee master, so not headcount
   • Safety (KPA): ips_cb.jsa_records (job sites, hazards, PPE, employees)
   • People/crews: ips_cb.persons, ips_cb.crews, ips_cb.crew_members, ips_cb.employee_vehicle_map`
       );

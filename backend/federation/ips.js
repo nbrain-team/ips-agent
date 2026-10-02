@@ -11,6 +11,7 @@
 
 const { createFederationRouter } = require('./index');
 const clientConfig = require('../agentic/config/client-config');
+const ipsDomain = require('../agentic/config/ipsDomainKnowledge');
 
 const AGENT_ID = 'ips';
 const LABEL = 'IPS — Ingram Professional Services';
@@ -40,14 +41,20 @@ Large results:
 
 {{SYSTEMS_OF_RECORD}}
 
+${ipsDomain.SYSTEMS_OF_RECORD}
+
+${ipsDomain.DIVISIONS_AND_LOCATIONS}
+
+${ipsDomain.ANSWER_HABITS}
+
 ALWAYS pass the "hint" parameter to ips.query_billing_database with the most likely table name. Its semantic table discovery is unreliable without one and will silently answer from the wrong table. The billing schema is:
   ips_cb.field_tickets, field_ticket_lines, field_ticket_verifications — recent SAP B1 field tickets under billing verification
   ips_cb.invoices, invoice_lines, document_bundles, portal_submissions — billing output
   ips_cb.exceptions — verification failures needing review
   ips_cb.customers, customer_rules — customers (pilot: Mewbourne Oil Co)
   ips_cb.jsa_records — KPA job safety analyses
-  ips_cb.gps_snapshots, motive_driving_periods, employee_vehicle_map — Motive fleet GPS
-  ips_cb.paycom_time_entries, payroll_truth, payroll_dsr_truth — Paycom payroll and hours
+  ips_cb.gps_snapshots, motive_driving_periods, employee_vehicle_map — Motive fleet GPS (Jul 6, 2026 onward, active units only)
+  ips_cb.paycom_time_entries, payroll_truth, payroll_dsr_truth — Paycom payroll and hours (time punches, not the employee master; never headcount)
   ips_cb.crews, crew_members, persons — people and crew assignments
   ips_cb.job_overlay, data_source_status, tax_rates — supporting reference data
 If a billing result looks implausible (zero rows where you expect data, or a table name unrelated to the question), retry once with an explicit hint before reporting the number.

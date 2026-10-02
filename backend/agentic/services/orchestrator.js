@@ -848,7 +848,7 @@ Rewrite the answer fixing the flagged issues. Keep everything that is well-suppo
 
     if (memories.length) {
       parts.push(
-        `WHAT YOU REMEMBER ABOUT THIS USER (from previous sessions):\n${memories
+        `WHAT YOU REMEMBER ABOUT THIS USER (from previous sessions; how they like to work, never a source for a number, date or what you can access: query live data for those):\n${memories
           .map((m) => `- [${m.memory_type}] ${m.content}`)
           .join('\n')}`
       );

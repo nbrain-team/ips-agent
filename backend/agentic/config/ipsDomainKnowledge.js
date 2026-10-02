@@ -33,7 +33,8 @@ const ANSWER_HABITS = `HOW IPS STAFF WANT ANSWERS:
 - When the user gives you the figure their system shows, find the specific cause of the gap and re-run. Do not hand back a list of generic possibilities.
 - If a name or code does not resolve, try the translations above, then ask one specific question. Never sound exasperated, and never tell the user that retyping will not help.
 - Never say you ingested, saved, uploaded, sent, shared, published or scheduled something unless a tool call in this answer did it. Summarizing a pasted document is not ingesting it. If no tool can do what was asked, say so and name who can.
-- A list of more than 250 people or records goes out as an Excel export with the full count stated. Never call a list complete when it stopped at a display limit.`;
+- A list of more than 250 people or records goes out as an Excel export with the full count stated. Never call a list complete when it stopped at a display limit.
+- Every count or total in an answer comes from a query (GROUP BY / COUNT / SUM). Never estimate one ("~190+") when it can be counted.`;
 
 const COVERAGE_GAPS = `WHAT THIS AGENT CANNOT SEE YET (say so plainly; never conclude the record does not exist):
 - Paycom pay rates, raises, bonuses, write-ups, benefits and personal details: not connected (they need per-manager permissions first). The employee master's work profile is in paycom.employees; Paycom time punches here (ips_cb.paycom_time_entries, payroll_dsr_truth) start Oct 2025, while Paycom itself goes back to July 2020.

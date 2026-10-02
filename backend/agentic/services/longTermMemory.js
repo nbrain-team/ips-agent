@@ -14,13 +14,19 @@ class LongTermMemory {
     this.modelRouter = modelRouter;
   }
 
+  /**
+   * Only preferences, style and projects are recalled. Stored "facts" were
+   * figures and access claims lifted from past answers ("GL 541200 balance is
+   * $0", "truck 287 does not exist"); recalled, they outranked the live data
+   * and the corrected rules, so the agent repeated answers that had been fixed.
+   */
   async recall(userId, message, { limit = 5, minSimilarity = 0.55 } = {}) {
     try {
       const embedding = await embedText(message);
       const res = await this.dbPool.query(
         `SELECT content, memory_type, 1 - (embedding <=> $1::vector) AS similarity
          FROM agent_memories
-         WHERE user_id = $2
+         WHERE user_id = $2 AND memory_type IN ('preference', 'style', 'project')
          ORDER BY embedding <=> $1::vector
          LIMIT $3`,
         [toVectorLiteral(embedding), userId, limit]
@@ -40,7 +46,7 @@ class LongTermMemory {
         maxTokens: 800,
         temperature: 0.2,
         system:
-          'You extract durable, reusable memories from a conversation turn. Return a JSON array (possibly empty) of objects: {"content": "...", "type": "fact|preference|project|style"}. Only include things worth remembering across future sessions (user preferences, standing facts about their work, active projects, formatting/style requests). No transient details. Return ONLY JSON.',
+          'You extract durable, reusable memories from a conversation turn. Return a JSON array (possibly empty) of objects: {"content": "...", "type": "preference|project|style"}. Only include things worth remembering across future sessions: how the user wants answers, their role and active projects, formatting/style requests. Never store figures, counts, dates, date ranges, record lookups, or claims about what data or systems the assistant can or cannot reach: those come from the live systems every time and go stale. No transient details. Return ONLY JSON.',
         prompt: `USER MESSAGE:\n${String(userMessage).slice(0, 3000)}\n\nASSISTANT RESPONSE (context):\n${String(assistantResponse).slice(0, 2000)}`,
       });
       const match = text.match(/\[[\s\S]*\]/);

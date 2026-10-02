@@ -147,6 +147,8 @@ ${ipsDomain.SYSTEMS_OF_RECORD}
 
 ${ipsDomain.DIVISIONS_AND_LOCATIONS}
 
+${ipsDomain.GL_QUESTIONS}
+
 ${ipsDomain.COVERAGE_GAPS}
 
 ${ipsDomain.ANSWER_HABITS}

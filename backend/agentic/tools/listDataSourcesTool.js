@@ -100,6 +100,24 @@ Present the result as a SIMPLE, friendly list (source name — one-line descript
         });
       }
 
+      const paycom = await db
+        .query(
+          `SELECT MAX(synced_at) AS last_sync,
+                  COUNT(*) FILTER (WHERE employee_status = 'A')::int AS active,
+                  COUNT(*)::int AS people
+             FROM paycom.employees`
+        )
+        .catch(() => null);
+      if (paycom?.rows[0]?.last_sync) {
+        sources.push({
+          source: 'Paycom (IPS employee master)',
+          what: 'Every IPS employee, active and terminated: status, department/division, location, title, manager, hire/rehire/termination dates — synced nightly, queryable via query_operational_database (paycom.employees). Work profile only: no pay, personal details or benefits.',
+          active_employees: paycom.rows[0].active,
+          people_on_record: paycom.rows[0].people,
+          last_synced: paycom.rows[0].last_sync,
+        });
+      }
+
       const ramp = await db
         .query(
           `SELECT (SELECT MAX(synced_at) FROM ramp.business) AS last_sync,

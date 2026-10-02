@@ -447,6 +447,43 @@ async function start() {
     setInterval(() => runFv('hourly'), 3600000);
     console.log('🧾 FieldVu field-ticket sync scheduled hourly');
   }
+
+  // 12. Paycom employee master (work profile only): nightly, plus a catch-up
+  //     after boot when the last run is over a day old.
+  const paycom = require('./agentic/services/paycomSync');
+  if (paycom.isConfigured()) {
+    const { recordFailure } = require('./agentic/services/ingestFailures');
+    let paycomRunning = false;
+    const runPaycom = async (reason) => {
+      if (paycomRunning) return;
+      paycomRunning = true;
+      try {
+        console.log(`👷 Paycom employee sync starting (${reason})...`);
+        const r = await new paycom.PaycomSync(dbPool).sync();
+        console.log(`👷 Paycom employees stored: ${r.stored} of ${r.codes} (${r.active} active, ${r.failed} failed)`);
+        await new TableMetadataVectorization(dbPool).vectorizeAllTables((t) => t.startsWith('paycom.'));
+      } catch (err) {
+        console.warn('Paycom employee sync failed:', err.message);
+        recordFailure(dbPool, { source: 'paycom_sync', reference: reason, error: err.message }).catch(() => {});
+      } finally {
+        paycomRunning = false;
+      }
+    };
+    setTimeout(async () => {
+      const last = await dbPool
+        .query('SELECT MAX(synced_at) AS at FROM paycom.employees')
+        .then((r) => r.rows[0]?.at)
+        .catch(() => null);
+      if (!last || Date.now() - new Date(last).getTime() > 20 * 3600000) runPaycom('boot catch-up');
+    }, 4 * 60000);
+    const paycomHourUtc = parseInt(process.env.PAYCOM_SYNC_HOUR_UTC || '11', 10);
+    setInterval(() => {
+      if (new Date().getUTCHours() === paycomHourUtc) runPaycom('nightly');
+    }, 3600000);
+    console.log(`👷 Paycom employee sync scheduled daily at ${paycomHourUtc}:00 UTC`);
+  } else {
+    console.log('👷 Paycom employee sync disabled (PAYCOM_SID / PAYCOM_TOKEN not set)');
+  }
 }
 
 // Safety net: background jobs (email sync, attachment extraction, crawls)

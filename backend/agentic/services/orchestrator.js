@@ -893,6 +893,11 @@ Rewrite the answer fixing the flagged issues. Keep everything that is well-suppo
         '- query_fieldvu → FieldVu Cloud LIVE (IPS field-service platform on SAP S/4HANA since the 2026 cutover; first tickets Feb 6, 2026): jobs, equipment, field tickets (headers + detail), work orders, workers, customers, items, material inventory, price lists, branches. Use for CURRENT field-ops questions ("open tickets this week", "active jobs for XTO"). FieldVu is NOT SAP B1 and holds nothing before Feb 2026 — history lives in sap_b1.*. FieldVu ticket headers are also stored in fieldvu.field_tickets for aggregation. B1 and FieldVu overlap in 2026 with different numbering: report them side by side, never summed.'
       );
     }
+    if (require('./paycomSync').isConfigured()) {
+      dataLines.push(
+        '- Paycom EMPLOYEE MASTER via query_operational_database (hint "paycom.employees"): every IPS employee, active and terminated, with status, department/division, location, title, manager and hire/rehire/termination dates. Use it for headcount, rosters, "by department / by manager", tenure, and journeyman/apprentice counts. Work profile only: no pay, personal details or benefits. Hours and punches stay in query_billing_database.'
+      );
+    }
     parts.push(dataLines.join('\n'));
 
     const today = new Date().toLocaleDateString('en-US', {

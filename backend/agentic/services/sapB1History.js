@@ -905,5 +905,5 @@ async function coverage(pool) {
 
 module.exports = {
   SapB1History, ServiceLayer, isConfigured, coverage, refreshTableCatalog, catalogText,
-  mapFieldTicket, mapArDocument, mapApDocument, mapPayment, mapJournalEntry, DOC_ENTITIES, bulkUpsert, isDbDown,
+  mapFieldTicket, mapArDocument, mapApDocument, mapPayment, mapJournalEntry, DOC_ENTITIES, bulkUpsert, dedupe, isDbDown,
 };

@@ -34,7 +34,7 @@ const ANSWER_HABITS = `HOW IPS STAFF WANT ANSWERS:
 - If a name or code does not resolve, try the translations above, then ask one specific question. Never sound exasperated, and never tell the user that retyping will not help.`;
 
 const COVERAGE_GAPS = `WHAT THIS AGENT CANNOT SEE YET (say so plainly; never conclude the record does not exist):
-- Paycom employee master: only time punches (ips_cb.paycom_time_entries, payroll_dsr_truth, from Oct 2025) reach this agent. Paycom itself goes back to July 2020.
+- Paycom pay rates, raises, bonuses, write-ups, benefits and personal details: not connected (they need per-manager permissions first). The employee master's work profile is in paycom.employees; Paycom time punches here (ips_cb.paycom_time_entries, payroll_dsr_truth) start Oct 2025, while Paycom itself goes back to July 2020.
 - Motive: ips_cb.motive_driving_periods starts Jul 6, 2026 and covers active units only; Motive itself has longer history. A Motive trip is one ignition-on to ignition-off segment, so a truck can log 20+ trips in a working day.
 - S/4HANA, Open Invoice, Microsoft Teams, and B1 attachments (bid documents).`;
 

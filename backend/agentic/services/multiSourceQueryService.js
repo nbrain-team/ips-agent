@@ -100,6 +100,14 @@ const RAMP_NOTES = `RAMP (IPS corporate cards, schema ramp):
 - *_info tables (transactions_info, users_info, trips_info, limits_info, transfers_info) are detail copies of the same records, and transactions_info holds only the newest 1,000. Never add them to the base tables; use the base tables for totals.
 - business, business_balance and accounting_all_connections are single rows with everything in raw_data (jsonb). This Ramp account has no bills or vendor credits; IPS's AP bills are in SAP.`;
 
+const PAYCOM_NOTES = `PAYCOM EMPLOYEE MASTER (schema paycom, table paycom.employees, one row per person ever employed, work profile only):
+- Headcount today = COUNT(*) WHERE employee_status = 'A'. That is the number Paycom shows under Active Employees. Never count time punches as headcount.
+- Headcount as of a past date = hired (GREATEST(hire_date, rehire_date)) on or before the date AND (termination_date IS NULL OR termination_date > the date OR rehire_date > termination_date). Label it a reconstruction from hire and termination dates: Paycom's own figure for that day can differ by a few people.
+- Division = department_code / department_description (100 Electrical, 200 Powerline, 300 Midland Overhead, 400 Hydrovac, 600 Hobbs Overhead, 800 Automation & Fiber, 900 Corporate, 1300 Officer). Location = location ("Hobbs Office", "Midland Office", "El Paso Office", "Corporate"). Manager = supervisor_primary. Title = position_title (falls back to business_title).
+- Tenure: CURRENT_DATE - GREATEST(hire_date, rehire_date). "Here 90 days" = at least 90 days since that date.
+- Licenses and roles (journeyman, apprentice, automation tech) are in position_title; match with ILIKE.
+- Pay, raises, bonuses, addresses, phone numbers, birth dates and benefits are NOT in this table. Say so instead of guessing.`;
+
 class MultiSourceQueryService {
   /**
    * @param {Pool} dataPool      pool the SQL runs against
@@ -163,6 +171,7 @@ class MultiSourceQueryService {
     }
     if (relevantTables.some((t) => String(t.table_name).startsWith('sap_b1.'))) blocks.push(SAP_B1_JOIN_NOTES);
     if (relevantTables.some((t) => String(t.table_name).startsWith('ramp.'))) blocks.push(RAMP_NOTES);
+    if (relevantTables.some((t) => String(t.table_name).startsWith('paycom.'))) blocks.push(PAYCOM_NOTES);
     return blocks.join('\n\n');
   }
 

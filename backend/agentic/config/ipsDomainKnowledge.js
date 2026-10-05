@@ -3,8 +3,8 @@
  * the Ingram master agent applies when it calls IPS tools.
  *
  * Source: Brittney Simon (IPS accounting) walking Rachel Guzman through every
- * connected system on Oct 2, 2026, checked against the synced data. Labels
- * marked "unconfirmed" have not been named by anyone at IPS yet.
+ * connected system on Oct 2, 2026, checked against the synced data. B1
+ * division names, DAL, and 600 as a cost center: Brittney, Oct 5, 2026.
  */
 
 const SYSTEMS_OF_RECORD = `IPS SOURCES OF TRUTH — which system answers which question:
@@ -21,8 +21,11 @@ const SYSTEMS_OF_RECORD = `IPS SOURCES OF TRUTH — which system answers which q
 - Meeting transcripts and email: summaries, decisions, reminders, who said what. Never the source for a financial, headcount or fleet figure.`;
 
 const DIVISIONS_AND_LOCATIONS = `IPS DIVISIONS AND LOCATIONS — one profit center, a different label in each system:
-- Division codes: 100 Electrical (every branch), 200 Powerline / Linecrew, 400 Hydrovac, 800 Automation & Fiber, 900 Corporate. Paycom also has 300 Midland Overhead, 600 Hobbs Overhead, 1300 Officer; Fleetio has 500 Environmental, 600 Safety, 1100 Shop/Yard. B1 also posts to 500, 600, 700, 2100, 2200, 2300, 2400 — those names are unconfirmed: ask, never guess.
-- Location codes: HOB Hobbs, MID Midland, AND Andrews, LBK Lubbock, ELP El Paso, DAL (unconfirmed).
+- Division codes: 100 Electrical (every branch), 200 Powerline / Linecrew, 400 Hydrovac, 800 Automation & Fiber, 900 Corporate. Paycom also has 1300 Officer.
+- Overhead cost centers (no revenue of their own): 300 Midland Overhead, 600 Hobbs Overhead, 2200 El Paso Overhead. 2100 Lubbock Overhead, 2300 Andrews Overhead and 2400 Dallas Overhead are B1 history only; none is used in S/4HANA.
+- 500 Environmental: IPS no longer offers the service, so 500 is B1 history only. 700 holds PSD transactions in B1; S/4HANA has nothing under 700.
+- In B1 and Paycom, 600 is the Hobbs Overhead cost center. Fleetio uses its own labels (500 Environmental, 600 Safety, 1100 Shop/Yard); use them only for Fleetio equipment groups.
+- Location codes: HOB Hobbs, MID Midland, AND Andrews, LBK Lubbock, ELP El Paso, DAL Dallas.
 - How each system writes "Electrical, Hobbs": S/4HANA profit center 100HOB; B1 two dimensions, costing code 100 + location HOB (people write "100 HOB", "100 Hobbs", "Hobbs electrical"); Fleetio group "H100 - Electrical" (location letter H/M/L/E/A + division); Paycom department "100 | Electrical" with location "Hobbs Office".
 - Translate any of these forms yourself. Never ask the user to re-type a code you can map. Bare "100" means Electrical across all locations.
 - Say "profit center". A cost center is a unit that does not generate revenue.`;
@@ -30,7 +33,9 @@ const DIVISIONS_AND_LOCATIONS = `IPS DIVISIONS AND LOCATIONS — one profit cent
 const GL_QUESTIONS = `ASKING SAP B1 FOR GENERAL LEDGER FIGURES (phrase the database question this way):
 - "Balance as of 12/31/YYYY" on an income-statement account (4xxxxx-8xxxxx, e.g. 541200-000) = that account's activity for Jan 1 - Dec 31 of YYYY, closing entries excluded. Ask for that year's activity and report it as the balance. Never ask for or report a life-to-date total on these accounts. Only balance-sheet accounts (1xxxxx-3xxxxx) carry a cumulative balance.
 - Repair & maintenance for IPS = accounts 541200-000 (job cost equipment), 620300-000 (auto) and 654300-000 (office/building). Ask for all three by account number, show each and the total. 2025: $2,836,051.30 + $389,680.73.
-- Revenue = 4xxxxx accounts, expenses = 5xxxxx-8xxxxx, activity = debits minus credits (credits minus debits for revenue).`;
+- Revenue = 4xxxxx accounts, expenses = 5xxxxx-8xxxxx, activity = debits minus credits (credits minus debits for revenue).
+- IPS's B1 P&L shows net profit in parentheses because profit is a credit balance: "($945,988.50)" on their report is a $945,988.50 profit, not a loss. Report profit as a positive number and losses as negative, and say so when the user quotes a figure in parentheses.
+- Check figure, 100HOB August 2025 (Brittney's report): revenue $3,186,000.24, expenses $2,240,011.74, net profit $945,988.50.`;
 
 const ANSWER_HABITS = `HOW IPS STAFF WANT ANSWERS:
 - Short. Lead with the number.

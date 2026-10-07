@@ -149,6 +149,8 @@ ${ipsDomain.DIVISIONS_AND_LOCATIONS}
 
 ${ipsDomain.GL_QUESTIONS}
 
+${ipsDomain.BILLING_VERIFICATION}
+
 ${ipsDomain.COVERAGE_GAPS}
 
 ${ipsDomain.ANSWER_HABITS}

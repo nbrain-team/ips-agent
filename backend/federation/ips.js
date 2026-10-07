@@ -48,6 +48,8 @@ ${ipsDomain.DIVISIONS_AND_LOCATIONS}
 
 ${ipsDomain.GL_QUESTIONS}
 
+${ipsDomain.BILLING_VERIFICATION}
+
 ${ipsDomain.ANSWER_HABITS}
 
 ALWAYS pass the "hint" parameter to ips.query_billing_database with the most likely table name. Its semantic table discovery is unreliable without one and will silently answer from the wrong table. The billing schema is:

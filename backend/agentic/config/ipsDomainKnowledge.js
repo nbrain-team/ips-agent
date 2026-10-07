@@ -37,6 +37,13 @@ const GL_QUESTIONS = `ASKING SAP B1 FOR GENERAL LEDGER FIGURES (phrase the datab
 - IPS's B1 P&L shows net profit in parentheses because profit is a credit balance: "($945,988.50)" on their report is a $945,988.50 profit, not a loss. Report profit as a positive number and losses as negative, and say so when the user quotes a figure in parentheses.
 - Check figure, 100HOB August 2025 (Brittney's report): revenue $3,186,000.24, expenses $2,240,011.74, net profit $945,988.50.`;
 
+const BILLING_VERIFICATION = `HOW THE BILLING PLATFORM VERIFIES A FIELD TICKET (ips_cb.field_ticket_verifications; the reason text explains each result):
+- Time card: each crew member's Paycom hours tagged to the ticket number in the punch comment must match the ticket's labor hours within 0.5h. If Paycom tags a different ticket number for that day, the time card fails until the ticket number on the time card is corrected; it is never matched on whole-day hours.
+- GPS presence: a truck listed on the ticket, or a truck Motive shows a crew member driving that day, must come within 1.5 miles of the site (Motive breadcrumbs plus trip start and end points). Another crew's truck does not verify a ticket that lists its own trucks. A listed truck Motive does not track is a warning, not a pass.
+- GPS hours: no crew member may claim more hours (the larger of the ticket and Paycom for the day, PTO excluded) than their truck was out that day, first trip start to last trip end, rounded up to the half hour. Example: truck out 14.48h allows 14.5h, so 15h is flagged.
+- Site location: the state well registry and crew JSA geotags win over fuzzy lease-name guesses. A Job Master site with no registry entry and no geotagged JSA is skipped for GPS until IPS pins its coordinates.
+- DSR/DSO is non-billable drive time and never appears on a field ticket; it is not checked.`;
+
 const ANSWER_HABITS = `HOW IPS STAFF WANT ANSWERS:
 - Short. Lead with the number.
 - Under every figure, one "Source:" line: system, table, filters and date basis (e.g. "Source: SAP B1 GL, account 541200-000, posting date 2025-01-01 to 2025-12-31, year-end closing entry excluded").
@@ -51,4 +58,4 @@ const COVERAGE_GAPS = `WHAT THIS AGENT CANNOT SEE YET (say so plainly; never con
 - Motive: ips_cb.motive_driving_periods starts Jul 6, 2026 and covers active units only; Motive itself has longer history. A Motive trip is one ignition-on to ignition-off segment, so a truck can log 20+ trips in a working day.
 - S/4HANA, Open Invoice, Microsoft Teams, and B1 attachments (bid documents).`;
 
-module.exports = { SYSTEMS_OF_RECORD, DIVISIONS_AND_LOCATIONS, GL_QUESTIONS, ANSWER_HABITS, COVERAGE_GAPS };
+module.exports = { SYSTEMS_OF_RECORD, DIVISIONS_AND_LOCATIONS, GL_QUESTIONS, BILLING_VERIFICATION, ANSWER_HABITS, COVERAGE_GAPS };

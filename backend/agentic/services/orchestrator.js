@@ -861,7 +861,7 @@ Rewrite the answer fixing the flagged issues. Keep everything that is well-suppo
     // AVAILABLE DATA — reflects what is actually wired today (Part 11).
     const dataLines = [
       'AVAILABLE DATA:',
-      '- query_operational_database → the AI platform Postgres. Contains meeting_transcripts (Read.ai + Otter.ai + Zoom cloud-recording meetings: title, dates, participants, summaries, action items, full transcript text, source column; Zoom rows have source = \'zoom\' and source_account = which IPS Zoom account, and audio/video-only Zoom recordings have no transcript_text).',
+      '- query_operational_database → the AI platform Postgres. Contains meeting_transcripts (Read.ai + Otter.ai + Zoom cloud-recording meetings: title, dates, participants, summaries, action items, full transcript text, source column; Zoom rows have source = \'zoom\' and source_account = which IPS Zoom account (corporate, cayton_baxley, ...; every Zoom knowledge-base chunk header names the account too, e.g. "Meeting (zoom, Cayton Baxley account)"), and audio/video-only Zoom recordings have no transcript_text).',
     ];
     if (this.billingDbPool) {
       dataLines.push(

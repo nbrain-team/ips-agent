@@ -8,7 +8,7 @@
  *   ZOOM_<LABEL>_ACCOUNT_ID, ZOOM_<LABEL>_CLIENT_ID, ZOOM_<LABEL>_CLIENT_SECRET
  * Every complete set found in the environment is synced; adding an account
  * needs no code change. The display name is ZOOM_<LABEL>_NAME, or the label
- * title-cased (CLAYTON_BAXLEY → "Clayton Baxley"). ZOOM_EXPECTED_ACCOUNTS is
+ * title-cased (CAYTON_BAXLEY → "Cayton Baxley"). ZOOM_EXPECTED_ACCOUNTS is
  * how many accounts IPS is connecting, so the data page can show the ones
  * still waiting on credentials.
  *
@@ -225,7 +225,9 @@ class ZoomAccountSync {
   async processRecording(rec) {
     const sessionId = `zoom-${rec.uuid}`;
     const files = this.contentFiles(rec);
-    const sig = files.map((f) => f.id).sort().join(',');
+    // The version prefix forces a one-time re-ingest of every stored meeting when
+    // the chunk format changes (v2: account name in each chunk header).
+    const sig = `v2:${files.map((f) => f.id).sort().join(',')}`;
     const existing = await this.pool.query(
       `SELECT raw_payload->'zoom'->>'file_sig' AS sig FROM meeting_transcripts WHERE session_id = $1`,
       [sessionId]
@@ -258,6 +260,7 @@ class ZoomAccountSync {
       session_id: sessionId,
       source: 'zoom',
       source_account: this.label,
+      source_account_name: this.account.name,
       trigger: 'zoom_recording_sync',
       title: rec.topic || 'Untitled Zoom meeting',
       start_time: start ? start.toISOString() : null,

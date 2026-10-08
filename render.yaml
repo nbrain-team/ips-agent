@@ -120,11 +120,11 @@ services:
         sync: false
       - key: ZOOM_CORPORATE_CLIENT_SECRET
         sync: false
-      - key: ZOOM_CLAYTON_BAXLEY_ACCOUNT_ID
+      - key: ZOOM_CAYTON_BAXLEY_ACCOUNT_ID
         sync: false
-      - key: ZOOM_CLAYTON_BAXLEY_CLIENT_ID
+      - key: ZOOM_CAYTON_BAXLEY_CLIENT_ID
         sync: false
-      - key: ZOOM_CLAYTON_BAXLEY_CLIENT_SECRET
+      - key: ZOOM_CAYTON_BAXLEY_CLIENT_SECRET
         sync: false
       # How many Zoom accounts IPS is connecting; the data page lists the rest
       # as awaiting credentials.

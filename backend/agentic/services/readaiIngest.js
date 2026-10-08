@@ -35,6 +35,7 @@ function parsePayload(payload) {
     sessionId: String(p.session_id || p.id || crypto.createHash('sha256').update(JSON.stringify(p)).digest('hex').slice(0, 24)),
     source: p.source || 'read.ai',
     sourceAccount: p.source_account || null,
+    sourceAccountName: p.source_account_name || null,
     trigger: p.trigger || null,
     title: p.title || 'Untitled meeting',
     start: p.start_time || null,
@@ -53,7 +54,10 @@ function parsePayload(payload) {
 function chunkTranscript(meeting) {
   const dateStr = meeting.start ? new Date(meeting.start).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'unknown date';
   const who = meeting.participants.map((x) => x.name || x.email).filter(Boolean).join(', ');
-  const header = `[Meeting: "${meeting.title}" on ${dateStr}${who ? ` — participants: ${who}` : ''}]`;
+  // Every chunk names the account it came from, so a search result says which
+  // IPS Zoom account recorded it and "<account> meetings about X" matches.
+  const kind = meeting.sourceAccountName ? `Meeting (${meeting.source}, ${meeting.sourceAccountName} account)` : 'Meeting';
+  const header = `[${kind}: "${meeting.title}" on ${dateStr}${who ? ` — participants: ${who}` : ''}]`;
 
   const chunks = [];
 
@@ -121,7 +125,14 @@ async function ingestMeeting(dbPool, payload) {
       `INSERT INTO website_content (url, title, content, category, source, embedding, content_hash)
        VALUES ($1, $2, $3, 'meeting_transcript', $4, $5::vector, $6)
        ON CONFLICT (content_hash) DO NOTHING`,
-      [marker, meeting.title, chunk, meeting.source, toVectorLiteral(embedding), hash]
+      [
+        marker,
+        meeting.title,
+        chunk,
+        meeting.sourceAccountName ? `${meeting.source} · ${meeting.sourceAccountName}` : meeting.source,
+        toVectorLiteral(embedding),
+        hash,
+      ]
     );
     saved++;
   }

@@ -244,6 +244,37 @@ async function start() {
     }
   });
 
+  const zoomSync = require('./agentic/services/zoomSync');
+  app.post('/api/admin/sync-zoom', requireAdmin, async (_req, res) => {
+    try {
+      res.json({ success: true, results: await zoomSync.syncAllAccounts(dbPool) });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+  app.get('/api/admin/zoom-sync-status', requireAdmin, async (_req, res) => {
+    try {
+      const accounts = await dbPool.query(
+        `SELECT account_label, backfill_completed_at, earliest_recording, last_run_at, last_success_at,
+                last_error, recordings_seen, meetings_ingested
+         FROM zoom_sync_state ORDER BY account_label`
+      );
+      const meetings = await dbPool.query(
+        `SELECT source_account, COUNT(*)::int AS meetings,
+                COUNT(*) FILTER (WHERE COALESCE(transcript_text, '') <> '')::int AS with_transcript,
+                MIN(meeting_start) AS earliest, MAX(meeting_start) AS latest
+         FROM meeting_transcripts WHERE source = 'zoom' GROUP BY source_account ORDER BY source_account`
+      );
+      res.json({
+        configured_accounts: zoomSync.configuredAccounts().map((a) => a.label),
+        accounts: accounts.rows,
+        meetings: meetings.rows,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/admin/database-info', requireAdmin, async (_req, res) => {
     try {
       const tables = await dbPool.query(`
@@ -483,6 +514,29 @@ async function start() {
     console.log(`👷 Paycom employee sync scheduled daily at ${paycomHourUtc}:00 UTC`);
   } else {
     console.log('👷 Paycom employee sync disabled (PAYCOM_SID / PAYCOM_TOKEN not set)');
+  }
+
+  // 13. Zoom cloud recordings, every ZOOM_<LABEL>_* account: hourly. A new
+  //     account's first run backfills its whole recording history; that run
+  //     resumes (skipping meetings already stored) if a redeploy cuts it short.
+  const zoom = require('./agentic/services/zoomSync');
+  if (zoom.isConfigured()) {
+    let zoomRunning = false;
+    const runZoom = async () => {
+      if (zoomRunning) return;
+      zoomRunning = true;
+      try {
+        await zoom.syncAllAccounts(dbPool);
+      } finally {
+        zoomRunning = false;
+      }
+    };
+    setTimeout(runZoom, 150000);
+    setInterval(runZoom, parseInt(process.env.ZOOM_SYNC_INTERVAL_MIN || '60', 10) * 60000);
+    const labels = zoom.configuredAccounts().map((a) => a.label).join(', ');
+    console.log(`🎥 Zoom recording sync scheduled hourly (accounts: ${labels})`);
+  } else {
+    console.log('🎥 Zoom recording sync disabled (no ZOOM_<LABEL>_ACCOUNT_ID / _CLIENT_ID / _CLIENT_SECRET set)');
   }
 }
 

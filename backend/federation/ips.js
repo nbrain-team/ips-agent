@@ -33,7 +33,7 @@ Data routing for IPS questions:
 - Ramp corporate cards and spend (card transactions, cardholders, cards, spend limits, reimbursement trips, vendors, GL / Division / Location coding, missing receipts) → ips.query_operational_database with a hint naming the ramp table: ramp.transactions, ramp.users, ramp.cards, ramp.limits, ramp.trips, ramp.vendors, ramp.accounting_gl_accounts. Ramp history starts May 2025 and syncs nightly. Card spend is ramp.transactions summed by purchase date, refunds netted; IPS's AP bills are in SAP, not Ramp. This is IPS's Ramp account only — Studio Golf's Ramp is a separate account and is never in IPS data.
 - Employees, headcount, rosters by department or manager, titles, tenure, hire and termination dates → ips.query_operational_database with hint "paycom.employees" (Paycom employee master, synced nightly, work profile only: no pay or personal details). Headcount = employee_status 'A'. Hours and punches stay in ips.query_billing_database.
 - Company information, services, safety procedures, policies, SOPs, and ingested documents → ips.hybrid_search.
-- Meeting transcripts (Read.ai and Otter) live in the IPS knowledge base — reach them via ips.hybrid_search, or ips.query_operational_database when filtering by date or participant.
+- Meeting transcripts (Read.ai, Otter and Zoom recordings) live in the IPS knowledge base — reach them via ips.hybrid_search, or ips.query_operational_database when filtering by date or participant.
 - Never invent IPS figures. Every number must come from a tool result.
 
 Large results:

@@ -34,6 +34,7 @@ function parsePayload(payload) {
   return {
     sessionId: String(p.session_id || p.id || crypto.createHash('sha256').update(JSON.stringify(p)).digest('hex').slice(0, 24)),
     source: p.source || 'read.ai',
+    sourceAccount: p.source_account || null,
     trigger: p.trigger || null,
     title: p.title || 'Untitled meeting',
     start: p.start_time || null,
@@ -86,10 +87,11 @@ async function ingestMeeting(dbPool, payload) {
   await dbPool.query(
     `INSERT INTO meeting_transcripts
        (session_id, source, title, meeting_start, meeting_end, owner_email, participants,
-        summary, action_items, key_questions, topics, report_url, transcript_text, raw_payload)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        summary, action_items, key_questions, topics, report_url, transcript_text, raw_payload,
+        source_account)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      ON CONFLICT (session_id) DO UPDATE SET
-       source = EXCLUDED.source,
+       source = EXCLUDED.source, source_account = EXCLUDED.source_account,
        title = EXCLUDED.title, meeting_start = EXCLUDED.meeting_start,
        meeting_end = EXCLUDED.meeting_end, owner_email = EXCLUDED.owner_email,
        participants = EXCLUDED.participants, summary = EXCLUDED.summary,
@@ -102,6 +104,7 @@ async function ingestMeeting(dbPool, payload) {
       JSON.stringify(meeting.participants), meeting.summary, JSON.stringify(meeting.actionItems),
       JSON.stringify(meeting.keyQuestions), JSON.stringify(meeting.topics),
       meeting.reportUrl, meeting.transcriptText.slice(0, 2000000), JSON.stringify(payload).slice(0, 2000000),
+      meeting.sourceAccount,
     ]
   );
 

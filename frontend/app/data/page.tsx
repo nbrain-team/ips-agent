@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import Header from "@/components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Database, BookOpen, Brain, Landmark, Mail, Mic, Clock } from "lucide-react";
+import { Database, BookOpen, Brain, Landmark, Mail, Mic, Clock, Video } from "lucide-react";
 
 interface DataTable {
   table_name: string;
@@ -17,6 +17,30 @@ interface DataTable {
   updated_at: string;
 }
 
+interface ZoomAccount {
+  name: string;
+  label: string | null;
+  status: "connected" | "syncing" | "pending_first_run" | "error" | "not_connected";
+  error?: string | null;
+  meetings: number;
+  with_transcript?: number;
+  action_items?: number;
+  chunks?: number;
+  earliest_meeting?: string | null;
+  latest_meeting?: string | null;
+  history_loaded_at?: string | null;
+  last_synced?: string | null;
+  last_attempt?: string | null;
+}
+
+const ZOOM_STATUS: Record<ZoomAccount["status"], { text: string; className: string }> = {
+  connected: { text: "Connected · syncing hourly", className: "bg-green-50 text-green-700" },
+  syncing: { text: "Loading history", className: "bg-ips-steel-soft text-ips-steel" },
+  pending_first_run: { text: "Starting first sync", className: "bg-ips-steel-soft text-ips-steel" },
+  error: { text: "Sync error", className: "bg-ips-red-soft text-ips-red-dark" },
+  not_connected: { text: "Awaiting credentials", className: "border border-ips-border text-ips-charcoal-600" },
+};
+
 interface Inventory {
   data_tables: DataTable[];
   knowledge_base: { category: string; source: string; chunks: number; last_updated: string | null }[];
@@ -28,6 +52,7 @@ interface Inventory {
     latest_meeting: string | null;
     last_ingested: string | null;
   };
+  zoom_accounts?: ZoomAccount[];
   emails: {
     mailboxes: number;
     mailboxes_total: number;
@@ -198,6 +223,53 @@ export default function DataPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Zoom accounts — each tracked on its own */}
+        {inv?.zoom_accounts && inv.zoom_accounts.length > 0 && (
+          <Card>
+            <CardHeader className="flex flex-row items-center gap-2">
+              <Video className="h-4 w-4 text-ips-red" />
+              <CardTitle className="text-sm">Zoom accounts</CardTitle>
+              <span className="text-[11px] text-ips-charcoal-600 ml-auto">
+                {inv.zoom_accounts.filter((a) => a.status !== "not_connected").length} of {inv.zoom_accounts.length} connected
+              </span>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2.5">
+                {inv.zoom_accounts.map((a, i) => (
+                  <div key={a.label || `slot-${i}`} className="flex items-start gap-3 border-b border-ips-border pb-2.5 last:border-0 last:pb-0">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-ips-charcoal">{a.name}</span>
+                        <Badge className={ZOOM_STATUS[a.status].className}>{ZOOM_STATUS[a.status].text}</Badge>
+                      </div>
+                      {a.status === "not_connected" ? (
+                        <p className="text-[11px] text-gray-500 mt-1">Not connected yet: needs a Zoom Server-to-Server OAuth app for this account.</p>
+                      ) : (
+                        <>
+                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-[11px] text-gray-500">
+                            <span>{(a.with_transcript ?? 0).toLocaleString()} with transcripts</span>
+                            <span>{(a.action_items ?? 0).toLocaleString()} action items</span>
+                            {a.earliest_meeting && (
+                              <span>
+                                meetings {fmtDate(a.earliest_meeting)} → <strong className="text-ips-charcoal">{fmtDate(a.latest_meeting)}</strong>
+                              </span>
+                            )}
+                            <Freshness label="Last synced" date={a.last_synced} />
+                          </div>
+                          {a.error && <p className="text-[11px] text-ips-red mt-1 truncate">{a.error}</p>}
+                        </>
+                      )}
+                    </div>
+                    <Badge variant="outline" className="shrink-0">
+                      {a.meetings.toLocaleString()} meetings
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Table detail — both databases */}
         {[

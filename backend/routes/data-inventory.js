@@ -1,8 +1,8 @@
 /**
  * /api/data-inventory — the "what does the agent know?" page. Read-only
  * depth + freshness view over everything the agent can reach: both Postgres
- * databases (via table_vectors), synced M365 email, the knowledge base,
- * and long-term memories. Every source reports a last-updated timestamp.
+ * databases (via table_vectors), synced M365 email, meetings (with each Zoom
+ * account listed on its own), the knowledge base, and long-term memories. Every source reports a last-updated timestamp.
  */
 const express = require('express');
 const requireAuthFactory = require('../middleware/requireAuth');
@@ -51,6 +51,10 @@ module.exports = function dataInventoryRoutes(dbPool, billingDbPool) {
         )
         .catch(() => ({ rows: [{ mailboxes: 0, mailboxes_total: 0, last_synced: null, messages: 0, latest_message: null }] }));
 
+      const zoomAccounts = await require('../agentic/services/zoomSync')
+        .accountStatus(dbPool)
+        .catch(() => []);
+
       const rows = tables.rows.map((t) => ({
         ...t,
         // Freshest data point inside the table (max of its primary date column)
@@ -76,6 +80,7 @@ module.exports = function dataInventoryRoutes(dbPool, billingDbPool) {
           latest_meeting: maxDate(meetings.rows, 'latest_meeting'),
           last_ingested: maxDate(meetings.rows, 'last_ingested'),
         },
+        zoom_accounts: zoomAccounts,
         emails: emails.rows[0],
         billing_database_connected: !!billingDbPool,
         summary: {

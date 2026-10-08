@@ -193,6 +193,22 @@ function buildDataSources(dbPool, billingDbPool) {
       detail: 'Synced mail, live calendar and OneDrive/SharePoint file search',
     });
 
+    const zoomAccounts = await require('../agentic/services/zoomSync').accountStatus(dbPool).catch(() => []);
+    for (const a of zoomAccounts) {
+      sources.push({
+        id: `ips_zoom_${a.label || a.name.toLowerCase().replace(/\W+/g, '_')}`,
+        label: `Zoom: ${a.name}`,
+        kind: 'api',
+        status: a.status === 'connected' ? 'connected' : a.status === 'not_connected' ? 'not_configured' : 'degraded',
+        detail:
+          a.status === 'not_connected'
+            ? 'Awaiting Zoom credentials'
+            : a.error
+              ? `Sync error: ${a.error}`
+              : `${a.meetings.toLocaleString()} recorded meetings (${a.with_transcript.toLocaleString()} with transcripts), synced hourly`,
+      });
+    }
+
     return sources;
   };
 }

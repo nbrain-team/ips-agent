@@ -7,7 +7,10 @@
  * OAuth app. An account is three env vars sharing a label:
  *   ZOOM_<LABEL>_ACCOUNT_ID, ZOOM_<LABEL>_CLIENT_ID, ZOOM_<LABEL>_CLIENT_SECRET
  * Every complete set found in the environment is synced; adding an account
- * needs no code change.
+ * needs no code change. The display name is ZOOM_<LABEL>_NAME, or the label
+ * title-cased (CLAYTON_BAXLEY → "Clayton Baxley"). ZOOM_EXPECTED_ACCOUNTS is
+ * how many accounts IPS is connecting, so the data page can show the ones
+ * still waiting on credentials.
  *
  * Per account: the first run walks the whole cloud-recording history month by
  * month (the list API caps a request at one month), later runs re-read the last
@@ -42,7 +45,10 @@ function configuredAccounts() {
     const clientId = credential(`ZOOM_${label}_CLIENT_ID`);
     const clientSecret = credential(`ZOOM_${label}_CLIENT_SECRET`);
     if (accountId && clientId && clientSecret) {
-      accounts.push({ label: label.toLowerCase(), accountId, clientId, clientSecret });
+      const name =
+        credential(`ZOOM_${label}_NAME`) ||
+        label.toLowerCase().split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      accounts.push({ label: label.toLowerCase(), name, accountId, clientId, clientSecret });
     } else {
       console.warn(`[Zoom] ${label}: ACCOUNT_ID set but CLIENT_ID / CLIENT_SECRET missing, skipped`);
     }
@@ -119,7 +125,13 @@ class ZoomAccountSync {
     );
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data.access_token) {
-      throw new Error(`Zoom ${this.label}: token request failed (HTTP ${resp.status}) ${data.reason || data.error || ''}`.trim());
+      const reason = data.reason || data.error || '';
+      throw new Error(
+        `Zoom rejected the ${this.account.name} credentials (HTTP ${resp.status}: ${reason})` +
+          (/client_id|client_secret/i.test(reason)
+            ? ' — check the Server-to-Server OAuth app is activated in the Zoom Marketplace and the Client ID / Secret are current'
+            : '')
+      );
     }
     this.token = data.access_token;
     this.tokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000 - 5 * 60000;
@@ -338,14 +350,79 @@ async function syncAllAccounts(pool) {
       results.push(r);
     } catch (err) {
       console.warn(`[Zoom] ${account.label} sync failed: ${err.message}`);
+      const message = err.message.slice(0, 2000);
+      // Rejected credentials fail the same way every hour until someone fixes
+      // the Zoom app; one failure-inbox entry per distinct error, not 24 a day.
+      const prev = await pool
+        .query(`SELECT last_error FROM zoom_sync_state WHERE account_label = $1`, [account.label])
+        .then((r) => r.rows[0]?.last_error)
+        .catch(() => null);
       await pool
-        .query(`UPDATE zoom_sync_state SET last_error = $2, updated_at = NOW() WHERE account_label = $1`, [account.label, err.message.slice(0, 2000)])
+        .query(
+          `INSERT INTO zoom_sync_state (account_label, zoom_account_id, last_run_at, last_error)
+           VALUES ($1, $2, NOW(), $3)
+           ON CONFLICT (account_label) DO UPDATE SET last_run_at = NOW(), last_error = $3, updated_at = NOW()`,
+          [account.label, account.accountId, message]
+        )
         .catch(() => {});
-      await require('./ingestFailures').recordFailure(pool, { source: 'zoom_sync', reference: account.label, error: err.message });
+      if (prev !== message) {
+        await require('./ingestFailures').recordFailure(pool, { source: 'zoom_sync', reference: account.name, error: err.message });
+      }
       results.push({ account: account.label, error: err.message });
     }
   }
   return results;
 }
 
-module.exports = { syncAllAccounts, configuredAccounts, isConfigured, vttToText, monthWindows };
+/** One row per Zoom account for the data page, plus placeholders for accounts not connected yet. */
+async function accountStatus(pool) {
+  const configured = configuredAccounts();
+  const [state, meetings] = await Promise.all([
+    pool.query(`SELECT * FROM zoom_sync_state`).catch(() => ({ rows: [] })),
+    pool
+      .query(
+        `SELECT source_account, COUNT(*)::int AS meetings,
+                COUNT(*) FILTER (WHERE COALESCE(transcript_text, '') <> '')::int AS with_transcript,
+                COALESCE(SUM(jsonb_array_length(action_items)), 0)::int AS action_items,
+                COALESCE(SUM(chunk_count), 0)::int AS chunks,
+                MIN(meeting_start) AS earliest_meeting, MAX(meeting_start) AS latest_meeting
+         FROM meeting_transcripts WHERE source = 'zoom' GROUP BY source_account`
+      )
+      .catch(() => ({ rows: [] })),
+  ]);
+  const stateBy = Object.fromEntries(state.rows.map((r) => [r.account_label, r]));
+  const meetingsBy = Object.fromEntries(meetings.rows.map((r) => [r.source_account, r]));
+
+  const accounts = configured.map((a) => {
+    const s = stateBy[a.label] || {};
+    const m = meetingsBy[a.label] || {};
+    let status = 'syncing';
+    if (s.last_error) status = 'error';
+    else if (s.backfill_completed_at) status = 'connected';
+    else if (!s.last_run_at) status = 'pending_first_run';
+    return {
+      name: a.name,
+      label: a.label,
+      status,
+      error: s.last_error || null,
+      meetings: m.meetings || 0,
+      with_transcript: m.with_transcript || 0,
+      action_items: m.action_items || 0,
+      chunks: m.chunks || 0,
+      earliest_meeting: m.earliest_meeting || null,
+      latest_meeting: m.latest_meeting || null,
+      history_loaded_at: s.backfill_completed_at || null,
+      last_synced: s.last_success_at || null,
+      last_attempt: s.last_run_at || null,
+    };
+  });
+  // Order of connection: accounts whose history has loaded first, oldest first.
+  accounts.sort((x, y) => String(x.history_loaded_at || '9999').localeCompare(String(y.history_loaded_at || '9999')));
+  const expected = parseInt(process.env.ZOOM_EXPECTED_ACCOUNTS || '0', 10);
+  for (let i = accounts.length; i < expected; i++) {
+    accounts.push({ name: `Zoom account ${i + 1}`, label: null, status: 'not_connected', meetings: 0 });
+  }
+  return accounts;
+}
+
+module.exports = { syncAllAccounts, configuredAccounts, isConfigured, accountStatus, vttToText, monthWindows };

@@ -29,6 +29,9 @@ const { ingestMeeting } = require('./readaiIngest');
 
 const API = 'https://api.zoom.us/v2';
 const LABEL_RE = /^ZOOM_([A-Z0-9_]+)_ACCOUNT_ID$/;
+// Bump when the chunk format changes; every stored meeting is then re-ingested
+// once on a full history walk. v2: account name in each chunk header.
+const CHUNK_VERSION = 'v2';
 
 // Values pasted into the Render dashboard pick up spaces, newlines and quotes.
 function credential(name) {
@@ -225,9 +228,7 @@ class ZoomAccountSync {
   async processRecording(rec) {
     const sessionId = `zoom-${rec.uuid}`;
     const files = this.contentFiles(rec);
-    // The version prefix forces a one-time re-ingest of every stored meeting when
-    // the chunk format changes (v2: account name in each chunk header).
-    const sig = `v2:${files.map((f) => f.id).sort().join(',')}`;
+    const sig = `${CHUNK_VERSION}:${files.map((f) => f.id).sort().join(',')}`;
     const existing = await this.pool.query(
       `SELECT raw_payload->'zoom'->>'file_sig' AS sig FROM meeting_transcripts WHERE session_id = $1`,
       [sessionId]
@@ -299,7 +300,14 @@ class ZoomAccountSync {
 
   async sync() {
     const state = await this.loadState();
-    const backfill = !state.backfill_completed_at;
+    const outdated = await this.pool.query(
+      `SELECT 1 FROM meeting_transcripts
+       WHERE source = 'zoom' AND source_account = $1
+         AND COALESCE(raw_payload->'zoom'->>'file_sig', '') NOT LIKE $2
+       LIMIT 1`,
+      [this.label, `${CHUNK_VERSION}:%`]
+    );
+    const backfill = !state.backfill_completed_at || outdated.rows.length > 0;
     const now = new Date();
     const from = backfill ? this.backfillFrom : new Date(now.getTime() - this.lookbackDays * 86400000);
     await this.pool.query(`UPDATE zoom_sync_state SET last_run_at = NOW(), updated_at = NOW() WHERE account_label = $1`, [this.label]);

@@ -147,6 +147,8 @@ ${ipsDomain.SYSTEMS_OF_RECORD}
 
 ${ipsDomain.DIVISIONS_AND_LOCATIONS}
 
+${ipsDomain.B1_OR_S4}
+
 ${ipsDomain.GL_QUESTIONS}
 
 ${ipsDomain.BILLING_VERIFICATION}

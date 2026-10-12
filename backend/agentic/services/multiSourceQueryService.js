@@ -14,7 +14,7 @@
  */
 const Anthropic = require('@anthropic-ai/sdk');
 const TableRouter = require('./TableRouter');
-const { isExcludedTable, splitQualified } = require('./TableMetadataVectorization');
+const { isExcludedTable, splitQualified, columnNote, VIEW_SCHEMAS, DATA_TABLES_SQL } = require('./TableMetadataVectorization');
 const { llmHttpsAgent } = require('../utils/httpAgent');
 const { withRetry, sanitizeAnthropicParams } = require('../utils/anthropicRetry');
 
@@ -82,7 +82,18 @@ const RAMP_PARTNERS = {
   accounting_gl_accounts: ['transactions'],
 };
 
-const PARTNERS = { sap_b1: SAP_B1_PARTNERS, ramp: RAMP_PARTNERS };
+const SAP_S4_PARTNERS = {
+  journal_entry_items: ['gl_accounts'],
+  billing_document_items: ['customers'],
+};
+
+const PARTNERS = { sap_b1: SAP_B1_PARTNERS, sap_s4: SAP_S4_PARTNERS, ramp: RAMP_PARTNERS };
+
+const SAP_GL_LINES_NOTES = `sap.gl_lines — ONE general ledger across the S/4HANA cutover (SAP B1 for posting dates before 2026-08-01, S/4HANA ledger 0L from 2026-08-01; source_system says which):
+- Prefer it over sap_b1.journal_entry_lines / sap_s4.journal_entry_items for any GL, P&L, account or profit-center question, and always when the period crosses August 1, 2026. Never add sap_b1 or sap_s4 journal tables to it: it already holds both.
+- amount is signed (debit positive). Account activity = SUM(amount); revenue = -SUM(amount) WHERE account_class = 'revenue'; expenses = SUM(amount) WHERE account_class = 'expense'.
+- Exclude is_period_close (B1 year-end closing and opening entries) from any period activity or P&L; keep it for balance-sheet balances. Leave account_class 'allocation' out of company-wide P&L totals (it nets to zero) but include it for one profit center.
+- gl_account is the shared number without the dash: '541200' = B1 541200-000. profit_center = division + location ('100HOB'); division and location are also separate columns. Group by source_system when the user should see which system each figure came from.`;
 
 const RAMP_NOTES = `RAMP (IPS corporate cards, schema ramp):
 - KEYS: ramp_id (text) is Ramp's own id. The integer "id" column is a local row number: never join or filter on it.
@@ -127,12 +138,7 @@ class MultiSourceQueryService {
   }
 
   async getAllTables() {
-    const res = await this.dataPool.query(`
-      SELECT table_schema, table_name FROM information_schema.tables
-      WHERE table_type = 'BASE TABLE'
-        AND table_schema NOT IN ('pg_catalog', 'information_schema')
-        AND table_schema NOT LIKE 'pg_%'
-      ORDER BY table_schema, table_name`);
+    const res = await this.dataPool.query(DATA_TABLES_SQL, [VIEW_SCHEMAS]);
     return res.rows
       .filter((r) => !isExcludedTable(r.table_schema, r.table_name))
       .map((r) => (r.table_schema === 'public' ? r.table_name : `${r.table_schema}.${r.table_name}`));
@@ -148,7 +154,7 @@ class MultiSourceQueryService {
 
       let block = `TABLE "${t.table_name}" (${t.row_count} rows)`;
       if (cols.length) {
-        block += `\n  COLUMNS: ${cols.map((c) => `"${c.column_name}" ${c.data_type}`).join(', ')}`;
+        block += `\n  COLUMNS: ${cols.map((c) => `"${c.column_name}" ${c.data_type}${columnNote(c) ? ` [${columnNote(c)}]` : ''}`).join(', ')}`;
       } else {
         // information_schema fallback if vector metadata is missing columns
         try {
@@ -170,6 +176,8 @@ class MultiSourceQueryService {
       blocks.push(block);
     }
     if (relevantTables.some((t) => String(t.table_name).startsWith('sap_b1.'))) blocks.push(SAP_B1_JOIN_NOTES);
+    if (relevantTables.some((t) => String(t.table_name).startsWith('sap_s4.'))) blocks.push(`SAP S/4HANA (schema sap_s4):\n${require('./sapS4Sync').TABLE_GUIDE}`);
+    if (relevantTables.some((t) => String(t.table_name).startsWith('sap.'))) blocks.push(SAP_GL_LINES_NOTES);
     if (relevantTables.some((t) => String(t.table_name).startsWith('ramp.'))) blocks.push(RAMP_NOTES);
     if (relevantTables.some((t) => String(t.table_name).startsWith('paycom.'))) blocks.push(PAYCOM_NOTES);
     return blocks.join('\n\n');

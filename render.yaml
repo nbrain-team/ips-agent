@@ -105,6 +105,16 @@ services:
         sync: false
       - key: SAP_COMPANY_DB
         sync: false
+      # SAP S/4HANA Cloud (Aug 1, 2026 onward), synced into sap_s4. Set in
+      # dashboard. SAP_S4_ENVIRONMENT=production only for IPS's PROD tenant.
+      - key: SAP_S4_BASE_URL
+        sync: false
+      - key: SAP_S4_USERNAME
+        sync: false
+      - key: SAP_S4_PASSWORD
+        sync: false
+      - key: SAP_S4_ENVIRONMENT
+        sync: false
       # Ramp (IPS corporate spend) — developer app created in IPS's Ramp account,
       # read scopes only. Set in dashboard.
       - key: RAMP_CLIENT_ID

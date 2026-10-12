@@ -27,11 +27,30 @@ const EXCLUDED_TABLES = [
 
 // Schemas written by the source syncs hold only business data, so a name on
 // the list above (ramp.users is Ramp's cardholder list) is not infra there.
-const SYNCED_DATA_SCHEMAS = new Set(['ramp', 'sap_b1', 'fieldvu']);
+const SYNCED_DATA_SCHEMAS = new Set(['ramp', 'sap_b1', 'sap_s4', 'sap', 'fieldvu']);
+
+// Schemas whose views are business data the agent queries (sap.gl_lines spans
+// B1 and S/4). Views elsewhere are not profiled.
+const VIEW_SCHEMAS = ['sap'];
+
+const DATA_TABLES_SQL = `
+  SELECT table_schema, table_name FROM information_schema.tables
+  WHERE (table_type = 'BASE TABLE' OR (table_type = 'VIEW' AND table_schema = ANY($1)))
+    AND table_schema NOT IN ('pg_catalog', 'information_schema')
+    AND table_schema NOT LIKE 'pg_%'
+  ORDER BY table_schema, table_name`;
 
 function isExcludedTable(schema, table) {
   if (SYNCED_DATA_SCHEMAS.has(schema)) return false;
   return EXCLUDED_TABLES.includes(table) || /auth/i.test(schema);
+}
+
+/** A column's comment when it says more than the column name ("Journal Entry" on accounting_document, not "Company Code" on company_code). */
+function columnNote(col) {
+  if (!col.description) return null;
+  const text = col.description.replace(/\s*\(SAP [^)]+\)$/, '');
+  const squash = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return squash(text) === squash(col.column_name) ? null : text;
 }
 
 /** 'ips_cb.field_tickets' → { schema: 'ips_cb', table: 'field_tickets' } */
@@ -73,12 +92,7 @@ class TableMetadataVectorization {
    * SQL generation targets the right schema.
    */
   async listDataTables() {
-    const res = await this.dataPool.query(`
-      SELECT table_schema, table_name FROM information_schema.tables
-      WHERE table_type = 'BASE TABLE'
-        AND table_schema NOT IN ('pg_catalog', 'information_schema')
-        AND table_schema NOT LIKE 'pg_%'
-      ORDER BY table_schema, table_name`);
+    const res = await this.dataPool.query(DATA_TABLES_SQL, [VIEW_SCHEMAS]);
     return res.rows
       .filter((r) => !isExcludedTable(r.table_schema, r.table_name) && r.table_schema !== 'agent_metadata')
       .map((r) => (r.table_schema === 'public' ? r.table_name : `${r.table_schema}.${r.table_name}`));
@@ -88,11 +102,13 @@ class TableMetadataVectorization {
     const { schema, table } = splitQualified(tableName);
     const qualified = `"${schema}"."${table}"`;
     const cols = await this.dataPool.query(
-      `SELECT column_name, data_type FROM information_schema.columns
-       WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position`,
+      `SELECT column_name, data_type,
+              col_description(format('%I.%I', table_schema, table_name)::regclass, ordinal_position) AS description
+         FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position`,
       [schema, table]
     );
-    const columns = cols.rows;
+    const columns = cols.rows.map(({ description, ...c }) => (description ? { ...c, description } : c));
 
     let rowCount = 0;
     try {
@@ -130,7 +146,9 @@ class TableMetadataVectorization {
   }
 
   buildSearchableDescription(meta) {
-    const colList = meta.columns.map((c) => `${c.column_name} (${c.data_type})`).join(', ');
+    const colList = meta.columns
+      .map((c) => `${c.column_name} (${c.data_type}${columnNote(c) ? `: ${columnNote(c)}` : ''})`)
+      .join(', ');
     const parts = [
       `Table "${meta.tableName}" (source: ${this.sourceTag}) with ${meta.rowCount} rows.`,
       `Columns: ${colList}.`,
@@ -191,3 +209,6 @@ module.exports = TableMetadataVectorization;
 module.exports.EXCLUDED_TABLES = EXCLUDED_TABLES;
 module.exports.isExcludedTable = isExcludedTable;
 module.exports.splitQualified = splitQualified;
+module.exports.columnNote = columnNote;
+module.exports.VIEW_SCHEMAS = VIEW_SCHEMAS;
+module.exports.DATA_TABLES_SQL = DATA_TABLES_SQL;

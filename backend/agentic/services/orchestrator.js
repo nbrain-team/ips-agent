@@ -888,6 +888,11 @@ Rewrite the answer fixing the flagged issues. Keep everything that is well-suppo
         `- SAP Business One HISTORY (2017 → July 31, 2026; S/4HANA from August 1, 2026), via query_operational_database: field tickets, receivables, payables/vendor spend, payments and the general ledger. This is the complete legacy record — use it for any question before August 2026, audits, and "earliest/oldest" questions.\n  ${require('./sapB1History').catalogText()}`
       );
     }
+    if (require('./sapS4Sync').isConfigured()) {
+      dataLines.push(
+        `- SAP S/4HANA (August 1, 2026 onward), via query_operational_database. General ledger questions for any period → hint "sap.gl_lines" (B1 before the cutover, S/4 from it, never both for the same date).\n  ${require('./sapS4Sync').catalogText()}`
+      );
+    }
     if (require('./fieldvu').isConfigured()) {
       dataLines.push(
         '- query_fieldvu → FieldVu Cloud LIVE (IPS field-service platform on SAP S/4HANA since the 2026 cutover; first tickets Feb 6, 2026): jobs, equipment, field tickets (headers + detail), work orders, workers, customers, items, material inventory, price lists, branches. Use for CURRENT field-ops questions ("open tickets this week", "active jobs for XTO"). FieldVu is NOT SAP B1 and holds nothing before Feb 2026 — history lives in sap_b1.*. FieldVu ticket headers are also stored in fieldvu.field_tickets for aggregation. B1 and FieldVu overlap in 2026 with different numbering: report them side by side, never summed.'

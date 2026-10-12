@@ -453,6 +453,45 @@ async function start() {
     console.log('🗄️  SAP B1 history sync disabled (SAP_BASE_URL / SAP_USERNAME / SAP_PASSWORD / SAP_COMPANY_DB not set)');
   }
 
+  // 10b. SAP S/4HANA (August 1, 2026 onward): hourly. Masters are replaced in
+  //      full, journal and billing items over a rolling window, with a full
+  //      refresh once a day. Re-profiled after each run, including sap.gl_lines.
+  const sapS4 = require('./agentic/services/sapS4Sync');
+  if (sapS4.isConfigured()) {
+    const { recordFailure } = require('./agentic/services/ingestFailures');
+    const reprofile = async () => {
+      await sapS4.refreshCatalog(dbPool);
+      return new TableMetadataVectorization(dbPool).vectorizeAllTables(
+        (t) => t.startsWith('sap_s4.') || t.startsWith('sap.')
+      );
+    };
+    let s4Running = false;
+    const runS4 = async (reason) => {
+      if (s4Running) return;
+      s4Running = true;
+      try {
+        const summary = await new sapS4.SapS4Sync(dbPool).run();
+        console.log(`🗄️  SAP S/4 sync (${reason}, ${sapS4.environment()} tenant):`, JSON.stringify(summary));
+        const failed = Object.entries(summary).filter(([, v]) => /^(error|not_authorized)/.test(v));
+        if (failed.length) {
+          recordFailure(dbPool, { source: 'sap_s4_sync', reference: reason, error: failed.map(([k, v]) => `${k}: ${v}`).join('; ') }).catch(() => {});
+        }
+      } catch (err) {
+        console.warn('SAP S/4 sync failed:', err.message);
+        recordFailure(dbPool, { source: 'sap_s4_sync', reference: reason, error: err.message }).catch(() => {});
+      } finally {
+        await reprofile().catch((err) => console.warn('SAP S/4 table profiling failed:', err.message));
+        s4Running = false;
+      }
+    };
+    setTimeout(() => runS4('boot'), 3 * 60000);
+    const s4EveryMin = parseInt(process.env.SAP_S4_SYNC_INTERVAL_MIN || '60', 10);
+    setInterval(() => runS4('scheduled'), s4EveryMin * 60000);
+    console.log(`🗄️  SAP S/4 sync scheduled every ${s4EveryMin}m (${sapS4.environment()} tenant)`);
+  } else {
+    console.log('🗄️  SAP S/4 sync disabled (SAP_S4_BASE_URL / SAP_S4_USERNAME / SAP_S4_PASSWORD not set)');
+  }
+
   // 11. FieldVu Cloud field tickets, stored hourly alongside the B1 history.
   if (require('./agentic/services/fieldvu').isConfigured()) {
     const { syncFieldTickets } = require('./agentic/services/fieldvuHistory');

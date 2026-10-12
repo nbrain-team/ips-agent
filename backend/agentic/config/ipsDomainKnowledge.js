@@ -7,8 +7,14 @@
  * division names, DAL, and 600 as a cost center: Brittney, Oct 5, 2026.
  */
 
+const s4 = require('../services/sapS4Sync');
+
+const S4_STATUS = s4.isProduction()
+  ? 'connected in sap_s4'
+  : 'production S/4 is not connected yet; only VistaVu\'s test tenant is loaded, and it is not IPS\'s books';
+
 const SYSTEMS_OF_RECORD = `IPS SOURCES OF TRUTH — which system answers which question:
-- Money (GL, P&L, balance sheet, AR/AP, invoices, customers, vendors, MSAs, what a vehicle or job cost): SAP Business One for Jan 2017 → Jul 31, 2026; SAP S/4HANA from Aug 1, 2026 (S/4 is not connected yet). Every dollar figure comes from B1 or S/4. Never source a financial figure from Fleetio costs, Monday.com, emails, meeting transcripts, or spreadsheets in Dropbox/Drive. If B1/S4 cannot answer, say so.
+- Money (GL, P&L, balance sheet, AR/AP, invoices, customers, vendors, MSAs, what a vehicle or job cost): SAP Business One for Jan 2017 → Jul 31, 2026; SAP S/4HANA from Aug 1, 2026 (${S4_STATUS}). Every dollar figure comes from B1 or S/4. Never source a financial figure from Fleetio costs, Monday.com, emails, meeting transcripts, or spreadsheets in Dropbox/Drive. If B1/S4 cannot answer, say so.
 - Field tickets: FieldVu Cloud holds the field ticket, which becomes the billable items; approved tickets go to S/4 for billing. Invoices then go to Open Invoice (Enverus) for most customers, where each one is submitted, awaiting approval, or disputed. Open Invoice is not connected yet.
 - People: Paycom (since July 2020) is the employee master as well as timekeeping. It holds roster, department, supervisor, title, phone, address, hire/anniversary/rehire dates, write-ups, headcount history by division and location, licenses (e.g. journeyman), pay rates, last raise, bonuses, benefits, 401k and training. Headcount = employees with Paycom employment status Active. A count of people with time punches is NOT headcount; never present it as one.
 - Fleet equipment: Fleetio is the truth for the equipment list by division and location, ownership (owned with a bank note, paid off, or rented from Global or another rental supplier), maintenance/repair status, time to repair (still being set up), and pre/post-trip inspections (recently moved over from KPA). Fleetio costs are incomplete; vehicle cost comes from SAP. The unit number and the profit center are the same in Fleetio, Motive and SAP.
@@ -29,6 +35,14 @@ const DIVISIONS_AND_LOCATIONS = `IPS DIVISIONS AND LOCATIONS — one profit cent
 - How each system writes "Electrical, Hobbs": S/4HANA profit center 100HOB; B1 two dimensions, costing code 100 + location HOB (people write "100 HOB", "100 Hobbs", "Hobbs electrical"); Fleetio group "H100 - Electrical" (location letter H/M/L/E/A + division); Paycom department "100 | Electrical" with location "Hobbs Office".
 - Translate any of these forms yourself. Never ask the user to re-type a code you can map. Bare "100" means Electrical across all locations.
 - Say "profit center". A cost center is a unit that does not generate revenue.`;
+
+const B1_OR_S4 = `SAP B1 OR SAP S/4HANA — pick by the date the figure belongs to (posting date for the GL; document date for invoices, bills and payments):
+- Before August 1, 2026 → SAP B1 (sap_b1.*). August 1, 2026 onward → SAP S/4HANA (sap_s4.*). Never answer a post-cutover period from B1 or a pre-cutover period from S/4: S/4 also holds migration and test postings dated before August 2026.
+- General ledger, P&L, account activity, profit-center results → hint "sap.gl_lines" for ANY period. It takes B1 lines before the cutover and S/4 lines from it, so a range across August 1, 2026 ("2026 YTD", "last 12 months") is one query with nothing counted twice. When a range spans both, say how much came from each (group by source_system).
+- Customer invoices and billing → before the cutover sap_b1.ar_invoices / ar_credit_memos; from it sap_s4.billing_document_items (credit memo items are positive: subtract them). For a range across the cutover, query both and show B1 and S/4 side by side. Customer numbers differ between the systems: match a customer across them by name, never by code.
+- Vendor bills, vendor and customer payments, open items and aging: S/4 exposes only the GL so far. After the cutover, use the vendor / customer lines in sap.gl_lines (business_partner) and say S/4's AP/AR documents are not connected yet.
+- Field tickets after the cutover: FieldVu (fieldvu.field_tickets, query_fieldvu); billing_document_items.field_ticket_no ties an S/4 invoice line back to its ticket.
+${s4.isProduction() ? '' : '- RIGHT NOW production S/4HANA is NOT connected: only VistaVu\'s test tenant is loaded (sap_s4, test postings), and sap.gl_lines returns B1 lines only. For any IPS money question on or after August 1, 2026, say the S/4 figures are not available to the agent yet. Never present sap_s4 rows as IPS results.\n'}`;
 
 const GL_QUESTIONS = `ASKING SAP B1 FOR GENERAL LEDGER FIGURES (phrase the database question this way):
 - "Balance as of 12/31/YYYY" on an income-statement account (4xxxxx-8xxxxx, e.g. 541200-000) = that account's activity for Jan 1 - Dec 31 of YYYY, closing entries excluded. Ask for that year's activity and report it as the balance. Never ask for or report a life-to-date total on these accounts. Only balance-sheet accounts (1xxxxx-3xxxxx) carry a cumulative balance.
@@ -56,6 +70,7 @@ const ANSWER_HABITS = `HOW IPS STAFF WANT ANSWERS:
 const COVERAGE_GAPS = `WHAT THIS AGENT CANNOT SEE YET (say so plainly; never conclude the record does not exist):
 - Paycom pay rates, raises, bonuses, write-ups, benefits and personal details: not connected (they need per-manager permissions first). The employee master's work profile is in paycom.employees; Paycom time punches here (ips_cb.paycom_time_entries, payroll_dsr_truth) start Oct 2025, while Paycom itself goes back to July 2020.
 - Motive: ips_cb.motive_driving_periods starts Jul 6, 2026 and covers active units only; Motive itself has longer history. A Motive trip is one ignition-on to ignition-off segment, so a truck can log 20+ trips in a working day.
-- S/4HANA, Open Invoice, Microsoft Teams, and B1 attachments (bid documents).`;
+- ${s4.isProduction() ? '' : 'S/4HANA production (only VistaVu\'s test tenant is connected). '}S/4HANA AP/AR documents (vendor invoices, payments, open items) and its business partner master: VistaVu has not exposed them yet.
+- Open Invoice, Microsoft Teams, and B1 attachments (bid documents).`;
 
-module.exports = { SYSTEMS_OF_RECORD, DIVISIONS_AND_LOCATIONS, GL_QUESTIONS, BILLING_VERIFICATION, ANSWER_HABITS, COVERAGE_GAPS };
+module.exports = { SYSTEMS_OF_RECORD, DIVISIONS_AND_LOCATIONS, B1_OR_S4, GL_QUESTIONS, BILLING_VERIFICATION, ANSWER_HABITS, COVERAGE_GAPS };

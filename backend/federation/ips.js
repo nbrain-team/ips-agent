@@ -38,13 +38,15 @@ Data routing for IPS questions:
 
 Large results:
 - ips.query_operational_database and ips.query_billing_database return at most 250 rows for raw lists and 2,000 rows for aggregated results. Ask for totals and rankings directly ("all vendors ranked by total spend with amounts") so the SQL aggregates; a result marked CAPPED is partial and must not be presented as complete.
-- For "all", "every", "full list", "export", "spreadsheet"/"Excel" requests, or anything beyond a few hundred rows, call ips.export_query_result with the same query and hint plus source ("primary" for the SAP B1 history, Ramp and FieldVu tables; "billing" for ips_cb). It returns a download link (no login, expires in 24 hours), the row count, column totals and the first rows. Answer in chat from that summary and give the link; do not paste the whole table.
+- For "all", "every", "full list", "export", "spreadsheet"/"Excel" requests, or anything beyond a few hundred rows, call ips.export_query_result with the same query and hint plus source ("primary" for the SAP B1 history, S/4HANA, sap.gl_lines, Ramp and FieldVu tables; "billing" for ips_cb). It returns a download link (no login, expires in 24 hours), the row count, column totals and the first rows. Answer in chat from that summary and give the link; do not paste the whole table.
 
 {{SYSTEMS_OF_RECORD}}
 
 ${ipsDomain.SYSTEMS_OF_RECORD}
 
 ${ipsDomain.DIVISIONS_AND_LOCATIONS}
+
+${ipsDomain.B1_OR_S4}
 
 ${ipsDomain.GL_QUESTIONS}
 
@@ -71,10 +73,20 @@ const b1History = () => `- 2017 → July 31, 2026: SAP Business One (IPS moved t
 
 const B1_NOT_CONNECTED = `- 2017 → July 31, 2026: SAP Business One (S/4HANA from August 1, 2026). The full B1 history is NOT connected yet. For anything before mid-2025, say the B1 history is not yet available — never conclude a record does not exist.`;
 
+const s4Section = () => {
+  const s4 = require('../agentic/services/sapS4Sync');
+  if (!s4.isConfigured()) {
+    return `- August 1, 2026 onward: SAP S/4HANA. NOT connected yet: say IPS's S/4 figures are not available to the agent.`;
+  }
+  return `- August 1, 2026 onward: SAP S/4HANA, in the sap_s4 schema → ips.query_operational_database. For the general ledger across both systems use hint "sap.gl_lines".
+  ${s4.catalogText()}`;
+};
+
 function systemsOfRecord() {
   const b1 = require('../agentic/services/sapB1History').isConfigured() ? b1History() : B1_NOT_CONNECTED;
   return `IPS systems of record over time — pick the source by date:
 ${b1}
+${s4Section()}
 - Feb 2026 onward: FieldVu Cloud on SAP S/4HANA (new customer numbering, S/4 billing documents; it ran alongside B1 until the August 1, 2026 cutover). Stored in fieldvu.field_tickets (ips.query_operational_database), or live via ips.query_fieldvu. FieldVu is NOT B1 — never label FieldVu results as B1, and never infer B1's start date from FieldVu.
 - The two overlap during the 2026 transition with different numbering. Report them side by side; do not add their counts together.
 - ips_cb (query_billing_database) holds only the recent tickets the billing platform verifies (June 2025 onward) and open invoices. Use it for verification, exceptions, GPS/payroll/JSA checks — not for history.`;
@@ -159,6 +171,24 @@ function buildDataSources(dbPool, billingDbPool) {
         kind: 'postgres',
         status: cov && cov.some((c) => c.rows > 0) ? 'connected' : 'degraded',
         detail: cov ? cov.map(describe).join('; ') : 'Configured; first backfill not yet started',
+      });
+    }
+
+    const s4 = require('../agentic/services/sapS4Sync');
+    if (s4.isConfigured()) {
+      await s4.refreshCatalog(dbPool).catch(() => {});
+      const cov = await s4.coverage(dbPool).catch(() => null);
+      const failing = (cov || []).filter((c) => c.last_status && c.last_status !== 'ok');
+      sources.push({
+        id: 'ips_sap_s4',
+        label: s4.isProduction() ? 'SAP S/4HANA (Aug 1, 2026 onward)' : 'SAP S/4HANA — TEST tenant (not IPS books)',
+        kind: 'postgres',
+        status: cov && cov.some((c) => c.rows > 0) && !failing.length ? 'connected' : 'degraded',
+        detail: cov
+          ? cov
+              .map((c) => `${c.entity} ${c.rows.toLocaleString()}${c.earliest ? ` (${c.earliest} → ${c.latest})` : ''}${c.last_status && c.last_status !== 'ok' ? ` ${c.last_status}` : ''}`)
+              .join('; ')
+          : 'Configured; first sync not yet complete',
       });
     }
 

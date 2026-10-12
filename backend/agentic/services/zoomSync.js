@@ -175,17 +175,55 @@ class ZoomAccountSync {
     return { status: resp.status, data };
   }
 
-  async listRecordings(from, to) {
+  async listUsers() {
+    if (this.users) return this.users;
+    const users = [];
+    let next = '';
+    do {
+      const qs = new URLSearchParams({ page_size: '300' });
+      if (next) qs.set('next_page_token', next);
+      const { status, data } = await this.request(`/users?${qs}`);
+      if (status !== 200) throw new Error(`Zoom ${this.account.name}: users HTTP ${status} ${data?.message || ''}`);
+      users.push(...(data.users || []));
+      next = data.next_page_token || '';
+    } while (next);
+    this.users = users;
+    return users;
+  }
+
+  async pagedRecordings(path, from, to) {
     const meetings = [];
     let next = '';
     do {
       const qs = new URLSearchParams({ page_size: '300', from, to });
       if (next) qs.set('next_page_token', next);
-      const { status, data } = await this.request(`/accounts/me/recordings?${qs}`);
-      if (status !== 200) throw new Error(`Zoom ${this.label}: recordings ${from}..${to} HTTP ${status} ${data?.message || ''}`);
+      const { status, data } = await this.request(`${path}?${qs}`);
+      if (status !== 200) {
+        const err = new Error(`Zoom ${this.account.name}: recordings ${from}..${to} HTTP ${status} ${data?.message || ''}`);
+        err.zoomMessage = data?.message || '';
+        throw err;
+      }
       meetings.push(...(data.meetings || []));
       next = data.next_page_token || '';
     } while (next);
+    return meetings;
+  }
+
+  // Free (Basic) Zoom accounts refuse the account-wide list ("Only available
+  // for Paid account"); the per-user list still answers, so fall back to it.
+  async listRecordings(from, to) {
+    if (!this.perUser) {
+      try {
+        return await this.pagedRecordings('/accounts/me/recordings', from, to);
+      } catch (err) {
+        if (!/paid account/i.test(err.zoomMessage || '')) throw err;
+        this.perUser = true;
+      }
+    }
+    const meetings = [];
+    for (const u of await this.listUsers()) {
+      meetings.push(...(await this.pagedRecordings(`/users/${encodeURIComponent(u.id)}/recordings`, from, to)));
+    }
     return meetings;
   }
 
@@ -308,6 +346,11 @@ class ZoomAccountSync {
       [this.label, `${CHUNK_VERSION}:%`]
     );
     const backfill = !state.backfill_completed_at || outdated.rows.length > 0;
+    const users = await this.listUsers();
+    await this.pool.query(
+      `UPDATE zoom_sync_state SET total_users = $2, licensed_users = $3 WHERE account_label = $1`,
+      [this.label, users.length, users.filter((u) => u.type !== 1).length]
+    );
     const now = new Date();
     const from = backfill ? this.backfillFrom : new Date(now.getTime() - this.lookbackDays * 86400000);
     await this.pool.query(`UPDATE zoom_sync_state SET last_run_at = NOW(), updated_at = NOW() WHERE account_label = $1`, [this.label]);
@@ -416,6 +459,10 @@ async function accountStatus(pool) {
       label: a.label,
       status,
       error: s.last_error || null,
+      total_users: s.total_users ?? null,
+      licensed_users: s.licensed_users ?? null,
+      // Basic (free) users cannot record to the cloud, so nothing can arrive.
+      free_account: s.licensed_users === 0,
       meetings: m.meetings || 0,
       with_transcript: m.with_transcript || 0,
       action_items: m.action_items || 0,

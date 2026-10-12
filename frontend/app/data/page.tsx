@@ -22,6 +22,7 @@ interface ZoomAccount {
   label: string | null;
   status: "connected" | "syncing" | "pending_first_run" | "error" | "not_connected";
   error?: string | null;
+  free_account?: boolean;
   meetings: number;
   with_transcript?: number;
   action_items?: number;
@@ -258,6 +259,11 @@ export default function DataPage() {
                             <Freshness label="Last synced" date={a.last_synced} />
                           </div>
                           {a.error && <p className="text-[11px] text-ips-red mt-1 truncate">{a.error}</p>}
+                          {a.free_account && !a.error && (
+                            <p className="text-[11px] text-amber-700 mt-1">
+                              Free (Basic) Zoom account: no cloud recording, so no meetings can sync until this user has a paid Zoom license with cloud recording and transcripts on.
+                            </p>
+                          )}
                         </>
                       )}
                     </div>

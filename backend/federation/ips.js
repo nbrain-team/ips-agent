@@ -205,7 +205,9 @@ function buildDataSources(dbPool, billingDbPool) {
             ? 'Awaiting Zoom credentials'
             : a.error
               ? `Sync error: ${a.error}`
-              : `${a.meetings.toLocaleString()} recorded meetings (${a.with_transcript.toLocaleString()} with transcripts), synced hourly`,
+              : a.free_account
+                ? 'Connected, but a free Zoom account: no cloud recordings to sync'
+                : `${a.meetings.toLocaleString()} recorded meetings (${a.with_transcript.toLocaleString()} with transcripts), synced hourly`,
       });
     }
 

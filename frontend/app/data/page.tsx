@@ -232,7 +232,7 @@ export default function DataPage() {
               <Video className="h-4 w-4 text-ips-red" />
               <CardTitle className="text-sm">Zoom accounts</CardTitle>
               <span className="text-[11px] text-ips-charcoal-600 ml-auto">
-                {inv.zoom_accounts.filter((a) => a.status !== "not_connected").length} of {inv.zoom_accounts.length} connected
+                {inv.zoom_accounts.filter((a) => a.status === "connected").length} of {inv.zoom_accounts.length} connected
               </span>
             </CardHeader>
             <CardContent>

@@ -5,6 +5,7 @@
  *   node scripts/sap-s4-schema-gen.js                 # live (SAP_S4_* env)
  *   node scripts/sap-s4-schema-gen.js --from <dir>    # saved <VIEW>.metadata.xml files
  *   ... --ddl <file.sql>                              # also write CREATE TABLE + COMMENT statements
+ *   ... --ddl <file.sql> --alter-from <old sapS4Schema.js>  # only what changed: new tables, ADD COLUMN
  *
  * Writes agentic/services/sapS4Schema.js. Re-run it when sap_s4.sync_state
  * reports schema_drift, then add the new columns in a migration (the --ddl
@@ -24,7 +25,7 @@ const arg = (name) => {
 function columnName(field) {
   return field
     .replace(/^YY1_/, '')
-    .replace(/_(BDI|PRD|BDH|SDI|SDH)$/, '')
+    .replace(/_(BDI|PRD|BDH|SDI|SDH|BUS)$/i, '')
     .replace(/FieldVu/g, 'Fieldvu')
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
@@ -101,20 +102,38 @@ function ddl(table, spec) {
   ].join('\n');
 }
 
+/** Statements that bring tables built from `previous` up to `spec`: new tables whole, new columns added. */
+function alterDdl(table, spec, previous) {
+  if (!previous) return ddl(table, spec);
+  const had = new Set(previous.columns.map((c) => c.column));
+  const added = spec.columns.filter((c) => !had.has(c.column));
+  if (!added.length) return '';
+  return [
+    ...added.map((c) => `ALTER TABLE sap_s4.${table} ADD COLUMN IF NOT EXISTS ${c.column} ${c.sqlType.toUpperCase()};`),
+    ...added.map((c) => `COMMENT ON COLUMN sap_s4.${table}.${c.column} IS ${sqlString(`${c.label} (SAP ${c.field})`)};`),
+    '',
+  ].join('\n');
+}
+
 (async () => {
   const from = arg('--from');
+  const previousFile = arg('--alter-from');
+  const previous = previousFile ? require(path.resolve(previousFile)) : null;
   const client = from ? null : new S4Client();
   const out = {};
   const sql = [];
   for (const e of ENTITIES) {
     const xml = from ? fs.readFileSync(path.join(from, `${e.view}.metadata.xml`), 'utf8') : await client.metadata(e.view);
-    const spec = parse(xml, e.view);
+    const parsed = parse(xml, e.view);
+    const excluded = (e.exclude || []).filter((f) => parsed.columns.some((c) => c.field === f));
+    const spec = { ...parsed, columns: parsed.columns.filter((c) => !excluded.includes(c.field)) };
     out[e.table] = {
       view: spec.view,
       entityType: spec.entityType,
+      ...(excluded.length ? { excluded } : {}),
       columns: spec.columns.map(({ sqlType, ...c }) => c),
     };
-    sql.push(ddl(e.table, spec));
+    sql.push(previous ? alterDdl(e.table, spec, previous[e.table]) : ddl(e.table, spec));
     console.log(`${e.table}: ${spec.columns.length} columns, key ${spec.columns.filter((c) => c.key).map((c) => c.column).join(' + ')}`);
   }
 

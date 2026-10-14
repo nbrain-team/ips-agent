@@ -35,8 +35,15 @@ const ODATA_PATH = '/sap/opu/odata/sap';
 const FULL_REFRESH_MS = 20 * 3600000;
 
 // view = the YY1_EXT_<view>_READ CDS view; dateField drives the rolling window;
-// orderby replaces the key for paging where SAP cannot sort on it.
+// orderby replaces the key for paging where SAP cannot sort on it; filter
+// applies to every read; exclude lists SAP fields never copied.
 const ENTITIES = [
+  {
+    table: 'business_partners',
+    view: 'BP',
+    // Personal attributes of individual business partners are not needed.
+    exclude: ['IsFemale', 'IsMale', 'IsSexUnknown', 'BusPartMaritalStatus'],
+  },
   { table: 'customers', view: 'CUSTOMER' },
   { table: 'suppliers', view: 'SUPPLIER' },
   { table: 'ship_to_partners', view: 'SHIP_TO' },
@@ -51,7 +58,13 @@ const ENTITIES = [
     // ID is generated from these ('.1~0L.2~1710.3~2026.4~0100000000.5~000001.6~0L') and is not sortable.
     orderby: 'SourceLedger,CompanyCode,FiscalYear,AccountingDocument,LedgerGLLineItem,Ledger',
   },
-  { table: 'billing_document_items', view: 'BILLDOCITEM', dateField: 'BillingDocumentDate' },
+  {
+    table: 'billing_document_items',
+    view: 'BILLDOCITEM',
+    dateField: 'BillingDocumentDate',
+    // Without it every item repeats once per billing-type text language.
+    filter: "BillingDocumentTypeLanguage eq 'EN'",
+  },
 ];
 
 const serviceUrl = (view) => `${ODATA_PATH}/YY1_EXT_${view}_READ_CDS`;
@@ -188,7 +201,7 @@ function schemaDrift(xml, spec) {
   const view = spec.entityType;
   const block = (xml.match(new RegExp(`<EntityType Name="${view}"[\\s\\S]*?</EntityType>`)) || [''])[0];
   const live = new Set([...block.matchAll(/<Property Name="([^"]+)"/g)].map((m) => m[1]));
-  const known = new Set(spec.columns.map((c) => c.field));
+  const known = new Set([...spec.columns.map((c) => c.field), ...(spec.excluded || [])]);
   return {
     added: [...live].filter((f) => !known.has(f)),
     removed: [...known].filter((f) => !live.has(f)),
@@ -242,7 +255,11 @@ class SapS4Sync {
   async replace(entity, since) {
     const spec = SCHEMA_SPEC[entity.table];
     const dateCol = entity.dateField && spec.columns.find((c) => c.field === entity.dateField).column;
-    const filter = since ? `${entity.dateField} ge datetime'${since}T00:00:00'` : null;
+    const filter =
+      [entity.filter, since ? `${entity.dateField} ge datetime'${since}T00:00:00'` : null]
+        .filter(Boolean)
+        .map((f) => `(${f})`)
+        .join(' and ') || null;
     const cols = spec.columns.map((c) => c.column);
     const keyCols = spec.columns.filter((c) => c.key).map((c) => c.column);
     const orderby = entity.orderby || spec.columns.filter((c) => c.key).map((c) => c.field).join(',');
@@ -340,10 +357,11 @@ async function refreshCatalog(pool) {
 }
 
 const TABLE_GUIDE = `  Tables (schema sap_s4, one row per SAP record; every column carries SAP's field label as its comment):
-    customers (customer), suppliers (supplier), ship_to_partners (customer + sales area + partner function), products (product; fieldvu_related flags FieldVu items),
+    business_partners (business_partner; every customer and supplier plus individual people, business_partner_category 1 = person, 2 = organization), customers (customer), suppliers (supplier), ship_to_partners (customer + sales area + partner function), products (product; fieldvu_related flags FieldVu items),
     gl_accounts (chart_of_accounts 'YCOA' + gl_account), cost_centers / profit_centers (controlling_area + center + validity_end_date: filter validity_end_date >= CURRENT_DATE for the current record),
     journal_entry_items (id; the universal journal, one row per ledger line), billing_document_items (billing_document + billing_document_item; customer invoices and credit memos with FieldVu's field_ticket_no and job_no).
   How they connect:
+    customers.customer and suppliers.supplier = business_partners.business_partner (same number).
     journal_entry_items.gl_account = gl_accounts.gl_account (chart_of_accounts = 'YCOA'); .customer = customers.customer; .supplier = suppliers.supplier; .cost_center = cost_centers.cost_center; .profit_center = profit_centers.profit_center.
     billing_document_items.sold_to_party / payer_party / bill_to_party / ship_to_party = customers.customer; .product = products.product.
     Billing to the ledger: journal_entry_items.reference_document_type = 'VBRK' AND reference_document = billing_document_items.billing_document. A billing document with no such journal line has not been posted to accounting.
@@ -357,7 +375,7 @@ const TABLE_GUIDE = `  Tables (schema sap_s4, one row per SAP record; every colu
     gl_accounts: is_balance_sheet_account separates balance sheet from P&L; gl_account_type 'S' (e.g. 999999 Service Time) is a secondary cost element for internal allocations, and 999997 Material Cost OH / 999998 Equipment Cost Alloc are allocation accounts. All three net to zero company-wide: leave them out of P&L totals, but they matter for a single profit center or cost center.
     Legacy B1 account numbers carry over without the dash ('541200-000' → '541200'); some lines use S/4 8-digit accounts (61008000, 11001050). Match on gl_accounts.gl_account and gl_account_name.
     Profit center and division: profit_center is mostly a location ('HOB', 'MID', 'LOV' Loving, 'CORP'), sometimes division + location ('100HOB'). The division is the first three digits of cost_center ('100HOBB' = Hobbs Electrical), else of profit_center, else organization_division × 10 ('10' = 100). sap.gl_lines applies this rule.
-    Billing credit memos: sales_document_item_category 'G2W' / 'G2N' / 'SG2N' items are credit memos and carry positive amounts: subtract them for net billing. Cancelled billing documents cannot be identified yet (there is no billing document type or cancellation flag).
+    Billing by billing_document_type: 'F2' invoice, 'G2' credit memo, 'S1' cancellation of an invoice. Every amount is positive. Net billing = F2 WHERE NOT billing_document_is_cancelled, minus G2; leave S1 out (it only reverses the cancelled F2, named in cancelled_billing_document). Never identify credit memos by sales_document_item_category.
   sync_state shows when each table last loaded and any error. last_status 'not_authorized' means SAP refused the read: say that table is not available yet.`;
 
 function catalogText() {
@@ -381,6 +399,7 @@ async function coverage(pool) {
       FROM (
         SELECT 'journal_entry_items' AS entity, COUNT(*)::int AS rows, MIN(posting_date)::text AS earliest, MAX(posting_date)::text AS latest FROM ${SCHEMA}.journal_entry_items
         UNION ALL SELECT 'billing_document_items', COUNT(*)::int, MIN(billing_document_date)::text, MAX(billing_document_date)::text FROM ${SCHEMA}.billing_document_items
+        UNION ALL SELECT 'business_partners', COUNT(*)::int, NULL, NULL FROM ${SCHEMA}.business_partners
         UNION ALL SELECT 'customers', COUNT(*)::int, NULL, NULL FROM ${SCHEMA}.customers
         UNION ALL SELECT 'suppliers', COUNT(*)::int, NULL, NULL FROM ${SCHEMA}.suppliers
         UNION ALL SELECT 'ship_to_partners', COUNT(*)::int, NULL, NULL FROM ${SCHEMA}.ship_to_partners

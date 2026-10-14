@@ -3,6 +3,200 @@
  * One entry per sap_s4 table: SAP field → column, Postgres type, key flag and SAP's field label.
  */
 module.exports = {
+  "business_partners": {
+    "view": "BP",
+    "entityType": "YY1_EXT_BP_READType",
+    "excluded": [
+      "IsFemale",
+      "IsMale",
+      "IsSexUnknown",
+      "BusPartMaritalStatus"
+    ],
+    "columns": [
+      {
+        "field": "BusinessPartner",
+        "column": "business_partner",
+        "type": "text",
+        "key": true,
+        "label": "Business Partner Number"
+      },
+      {
+        "field": "BusinessPartnerName",
+        "column": "business_partner_name",
+        "type": "text",
+        "key": false,
+        "label": "Business Partner Name"
+      },
+      {
+        "field": "BusinessPartnerCategory",
+        "column": "business_partner_category",
+        "type": "text",
+        "key": false,
+        "label": "Business Partner Category"
+      },
+      {
+        "field": "AuthorizationGroup",
+        "column": "authorization_group",
+        "type": "text",
+        "key": false,
+        "label": "Authorization Group"
+      },
+      {
+        "field": "PersonNumber",
+        "column": "person_number",
+        "type": "text",
+        "key": false,
+        "label": "Person Number"
+      },
+      {
+        "field": "BusinessPartnerFullName",
+        "column": "business_partner_full_name",
+        "type": "text",
+        "key": false,
+        "label": "Business Partner Full Name"
+      },
+      {
+        "field": "ETag",
+        "column": "e_tag",
+        "type": "text",
+        "key": false,
+        "label": "ETag"
+      },
+      {
+        "field": "CreationDate",
+        "column": "creation_date",
+        "type": "date",
+        "key": false,
+        "label": "Date on which the object was created"
+      },
+      {
+        "field": "CreatedByUser",
+        "column": "created_by_user",
+        "type": "text",
+        "key": false,
+        "label": "User who created the object"
+      },
+      {
+        "field": "PersonFullName",
+        "column": "person_full_name",
+        "type": "text",
+        "key": false,
+        "label": "Full Name"
+      },
+      {
+        "field": "BusinessPartnerIsBlocked",
+        "column": "business_partner_is_blocked",
+        "type": "boolean",
+        "key": false,
+        "label": "Central Block for Business Partner"
+      },
+      {
+        "field": "IsBusinessPurposeCompleted",
+        "column": "is_business_purpose_completed",
+        "type": "text",
+        "key": false,
+        "label": "Business Purpose Completed Flag"
+      },
+      {
+        "field": "Industry",
+        "column": "industry",
+        "type": "text",
+        "key": false,
+        "label": "Industry Sector"
+      },
+      {
+        "field": "ContactPermission",
+        "column": "contact_permission",
+        "type": "text",
+        "key": false,
+        "label": "Business Partner: Contact Permission"
+      },
+      {
+        "field": "YY1_FVWorktypeLastUpda_bus",
+        "column": "fv_worktype_last_upda",
+        "type": "timestamptz",
+        "key": false,
+        "label": "FVWorktypeLastUpdate"
+      },
+      {
+        "field": "FirstName",
+        "column": "first_name",
+        "type": "text",
+        "key": false,
+        "label": "First Name of Business Partner (Person)"
+      },
+      {
+        "field": "LastName",
+        "column": "last_name",
+        "type": "text",
+        "key": false,
+        "label": "Last Name of Business Partner (Person)"
+      },
+      {
+        "field": "InternationalLocationNumber1",
+        "column": "international_location_number1",
+        "type": "text",
+        "key": false,
+        "label": "International location number  (part 1)"
+      },
+      {
+        "field": "LegalForm",
+        "column": "legal_form",
+        "type": "text",
+        "key": false,
+        "label": "BP: Legal form of organization"
+      },
+      {
+        "field": "FormOfAddress",
+        "column": "form_of_address",
+        "type": "text",
+        "key": false,
+        "label": "Form-of-Address Key"
+      },
+      {
+        "field": "BusinessPartnerDataOriginType",
+        "column": "business_partner_data_origin_type",
+        "type": "text",
+        "key": false,
+        "label": "Data Origin Types"
+      },
+      {
+        "field": "BusinessPartnerOccupation",
+        "column": "business_partner_occupation",
+        "type": "text",
+        "key": false,
+        "label": "Occupation/group"
+      },
+      {
+        "field": "NonResidentCompanyOriginCntry",
+        "column": "non_resident_company_origin_cntry",
+        "type": "text",
+        "key": false,
+        "label": "Country/Region of Origin: Non-Resident Companies"
+      },
+      {
+        "field": "BusinessPartnerGroupType",
+        "column": "business_partner_group_type",
+        "type": "text",
+        "key": false,
+        "label": "Group type"
+      },
+      {
+        "field": "LastChangeDate",
+        "column": "last_change_date",
+        "type": "date",
+        "key": false,
+        "label": "Date when object was last changed"
+      },
+      {
+        "field": "LastChangeTime",
+        "column": "last_change_time",
+        "type": "time",
+        "key": false,
+        "label": "Time at which object was last changed"
+      }
+    ]
+  },
   "customers": {
     "view": "CUSTOMER",
     "entityType": "YY1_EXT_CUSTOMER_READType",
@@ -328,6 +522,20 @@ module.exports = {
         "type": "boolean",
         "key": false,
         "label": "Deletion Block for Master Record (Company Code Level)"
+      },
+      {
+        "field": "LastChangeDate",
+        "column": "last_change_date",
+        "type": "date",
+        "key": false,
+        "label": "Date when object was last changed"
+      },
+      {
+        "field": "LastChangeTime",
+        "column": "last_change_time",
+        "type": "time",
+        "key": false,
+        "label": "Time at which object was last changed"
       }
     ]
   },
@@ -439,6 +647,34 @@ module.exports = {
         "type": "text",
         "key": false,
         "label": "Customer Number"
+      },
+      {
+        "field": "LastChangeDate",
+        "column": "last_change_date",
+        "type": "date",
+        "key": false,
+        "label": "Date when object was last changed"
+      },
+      {
+        "field": "LastChangeTime",
+        "column": "last_change_time",
+        "type": "time",
+        "key": false,
+        "label": "Time at which object was last changed"
+      },
+      {
+        "field": "LastChangedByUser",
+        "column": "last_changed_by_user",
+        "type": "text",
+        "key": false,
+        "label": "Last user to change object"
+      },
+      {
+        "field": "CreationDate",
+        "column": "creation_date",
+        "type": "date",
+        "key": false,
+        "label": "Record Created On"
       }
     ]
   },
@@ -578,6 +814,27 @@ module.exports = {
         "type": "text",
         "key": false,
         "label": "Name of Customer"
+      },
+      {
+        "field": "LastChangeDate",
+        "column": "last_change_date",
+        "type": "date",
+        "key": false,
+        "label": "Date when object was last changed"
+      },
+      {
+        "field": "LastChangedByUser",
+        "column": "last_changed_by_user",
+        "type": "text",
+        "key": false,
+        "label": "Last user to change object"
+      },
+      {
+        "field": "LastChangeTime",
+        "column": "last_change_time",
+        "type": "time",
+        "key": false,
+        "label": "Time at which object was last changed"
       }
     ]
   },
@@ -884,6 +1141,13 @@ module.exports = {
         "type": "text",
         "key": false,
         "label": "Language Key"
+      },
+      {
+        "field": "LastChangeDateTime",
+        "column": "last_change_date_time",
+        "type": "timestamptz",
+        "key": false,
+        "label": "UTC Time Stamp in Short Form (YYYYMMDDhhmmss)"
       }
     ]
   },
@@ -1072,6 +1336,34 @@ module.exports = {
         "type": "text",
         "key": false,
         "label": "Cost Center Name"
+      },
+      {
+        "field": "CostCenterLastChangedOnDate",
+        "column": "cost_center_last_changed_on_date",
+        "type": "date",
+        "key": false,
+        "label": "Last Changed On"
+      },
+      {
+        "field": "CostCenterLastChangedAtTime",
+        "column": "cost_center_last_changed_at_time",
+        "type": "time",
+        "key": false,
+        "label": "Last Changed At"
+      },
+      {
+        "field": "CostCenterCreationTime",
+        "column": "cost_center_creation_time",
+        "type": "time",
+        "key": false,
+        "label": "Created At"
+      },
+      {
+        "field": "CostCenterCreationDate",
+        "column": "cost_center_creation_date",
+        "type": "date",
+        "key": false,
+        "label": "Entered On"
       }
     ]
   },
@@ -1833,6 +2125,20 @@ module.exports = {
         "type": "date",
         "key": false,
         "label": "Clearing Date"
+      },
+      {
+        "field": "CreationDateTime",
+        "column": "creation_date_time",
+        "type": "timestamptz",
+        "key": false,
+        "label": "Creation Date Time"
+      },
+      {
+        "field": "LastChangeDateTime",
+        "column": "last_change_date_time",
+        "type": "timestamptz",
+        "key": false,
+        "label": "Last Change Date Time"
       }
     ]
   },
@@ -2308,6 +2614,55 @@ module.exports = {
         "type": "timestamptz",
         "key": false,
         "label": "UTC Time Stamp in Long Form (YYYYMMDDhhmmssmmmuuun)"
+      },
+      {
+        "field": "BillingDocumentType",
+        "column": "billing_document_type",
+        "type": "text",
+        "key": false,
+        "label": "Billing Type"
+      },
+      {
+        "field": "BillingDocumentCategory",
+        "column": "billing_document_category",
+        "type": "text",
+        "key": false,
+        "label": "Billing Category"
+      },
+      {
+        "field": "CancelledBillingDocument",
+        "column": "cancelled_billing_document",
+        "type": "text",
+        "key": false,
+        "label": "Number of canceled billing document"
+      },
+      {
+        "field": "BillingDocumentIsCancelled",
+        "column": "billing_document_is_cancelled",
+        "type": "boolean",
+        "key": false,
+        "label": "Billing document is canceled"
+      },
+      {
+        "field": "BillingDocumentDate_1",
+        "column": "billing_document_date_1",
+        "type": "date",
+        "key": false,
+        "label": "Billing Date"
+      },
+      {
+        "field": "BillingDocumentTypeLanguage",
+        "column": "billing_document_type_language",
+        "type": "text",
+        "key": false,
+        "label": "Language Key"
+      },
+      {
+        "field": "BillingDocumentTypeName",
+        "column": "billing_document_type_name",
+        "type": "text",
+        "key": false,
+        "label": "Description"
       }
     ]
   }

@@ -150,7 +150,7 @@ Present the result as a SIMPLE, friendly list (source name — one-line descript
           source: sapS4.isProduction()
             ? 'SAP S/4HANA (August 1, 2026 onward)'
             : 'SAP S/4HANA TEST tenant (VistaVu test system, not IPS books)',
-          what: 'S/4HANA general ledger (universal journal), customer billing document items with FieldVu ticket numbers, and the customer, supplier, ship-to, product, GL account, cost center and profit center masters — synced hourly, queryable via query_operational_database (sap_s4.* tables). sap.gl_lines combines the B1 and S/4 general ledgers across the cutover.',
+          what: 'S/4HANA general ledger (universal journal), customer billing document items with FieldVu ticket numbers, and the business partner, customer, supplier, ship-to, product, GL account, cost center and profit center masters — synced hourly, queryable via query_operational_database (sap_s4.* tables). sap.gl_lines combines the B1 and S/4 general ledgers across the cutover.',
           coverage,
         });
       }

@@ -210,6 +210,8 @@ function schemaDrift(xml, spec) {
 }
 
 // ── sync ─────────────────────────────────────────────────────────────────────
+let refusedLogin = null;
+
 class SapS4Sync {
   constructor(pool, opts = {}) {
     this.pool = pool;
@@ -302,7 +304,31 @@ class SapS4Sync {
     );
   }
 
+  /**
+   * One cheap read before anything else. SAP locks a user after a few failed
+   * logons, so a 401 stops the run, and the same credentials are not tried
+   * again until they change (a new env value means a redeploy).
+   */
+  async checkLogin() {
+    const key = `${this.client.host} ${this.client.auth}`;
+    if (refusedLogin === key) return 'skipped: SAP refused these credentials on an earlier run';
+    try {
+      await this.client.count('PROFIT_CENTER');
+      return null;
+    } catch (err) {
+      if (err.status !== 401) throw err;
+      refusedLogin = key;
+      const message = `${err.message}: logon refused. Not retried until SAP_S4_USERNAME / SAP_S4_PASSWORD change`;
+      for (const entity of ENTITIES) {
+        await this.markRun(entity.table, { last_run_at: new Date(), last_status: 'not_authorized', last_error: message });
+      }
+      return `not_authorized: ${message}`;
+    }
+  }
+
   async run() {
+    const refused = await this.checkLogin();
+    if (refused) return Object.fromEntries(ENTITIES.map((e) => [e.table, refused]));
     await this.ensureTenant();
     const summary = {};
     for (const entity of ENTITIES) {

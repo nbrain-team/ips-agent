@@ -6,12 +6,6 @@ module.exports = {
   "business_partners": {
     "view": "BP",
     "entityType": "YY1_EXT_BP_READType",
-    "excluded": [
-      "IsFemale",
-      "IsMale",
-      "IsSexUnknown",
-      "BusPartMaritalStatus"
-    ],
     "columns": [
       {
         "field": "BusinessPartner",
@@ -2644,13 +2638,6 @@ module.exports = {
         "label": "Billing document is canceled"
       },
       {
-        "field": "BillingDocumentDate_1",
-        "column": "billing_document_date_1",
-        "type": "date",
-        "key": false,
-        "label": "Billing Date"
-      },
-      {
         "field": "BillingDocumentTypeLanguage",
         "column": "billing_document_type_language",
         "type": "text",
@@ -2663,6 +2650,20 @@ module.exports = {
         "type": "text",
         "key": false,
         "label": "Description"
+      },
+      {
+        "field": "CreationDate",
+        "column": "creation_date",
+        "type": "date",
+        "key": false,
+        "label": "Record Creation Date"
+      },
+      {
+        "field": "CreationTime",
+        "column": "creation_time",
+        "type": "time",
+        "key": false,
+        "label": "Entry time"
       }
     ]
   }

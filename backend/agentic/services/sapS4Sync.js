@@ -201,10 +201,11 @@ function schemaDrift(xml, spec) {
   const view = spec.entityType;
   const block = (xml.match(new RegExp(`<EntityType Name="${view}"[\\s\\S]*?</EntityType>`)) || [''])[0];
   const live = new Set([...block.matchAll(/<Property Name="([^"]+)"/g)].map((m) => m[1]));
-  const known = new Set([...spec.columns.map((c) => c.field), ...(spec.excluded || [])]);
+  const loaded = spec.columns.map((c) => c.field);
+  const known = new Set([...loaded, ...(spec.excluded || [])]);
   return {
     added: [...live].filter((f) => !known.has(f)),
-    removed: [...known].filter((f) => !live.has(f)),
+    removed: loaded.filter((f) => !live.has(f)),
   };
 }
 

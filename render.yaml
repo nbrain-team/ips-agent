@@ -148,10 +148,16 @@ services:
         sync: false
       - key: ZOOM_ELGIN_MORENO_CLIENT_SECRET
         sync: false
+      - key: ZOOM_BRIANA_RAMIREZ_ACCOUNT_ID
+        sync: false
+      - key: ZOOM_BRIANA_RAMIREZ_CLIENT_ID
+        sync: false
+      - key: ZOOM_BRIANA_RAMIREZ_CLIENT_SECRET
+        sync: false
       # How many Zoom accounts IPS is connecting; the data page lists the rest
       # as awaiting credentials.
       - key: ZOOM_EXPECTED_ACCOUNTS
-        value: 4
+        value: 5
       # Client identity
       - key: CLIENT_NAME
         value: IPS

@@ -26,6 +26,10 @@ const EXTRACTABLE_EXT = /\.(pdf|docx?|xlsx?|pptx|csv|txt|md|json|html?)$/i;
 // Kill-switch: set EMAIL_ATTACHMENTS_ENABLED=false to stop attachment
 // ingestion entirely without a code change (email body sync unaffected).
 const ATTACHMENTS_ENABLED = process.env.EMAIL_ATTACHMENTS_ENABLED !== 'false';
+// Every Graph call is bounded. One request that never answers used to hold
+// syncInFlight forever, and every later run skipped as "already in progress".
+const GRAPH_TIMEOUT_MS = parseInt(process.env.MS_GRAPH_TIMEOUT_MS || '60000', 10);
+const SYNC_STALL_MS = parseInt(process.env.EMAIL_SYNC_STALL_MS || String(3 * 3600000), 10);
 
 function isConfigured() {
   return !!(
@@ -53,6 +57,7 @@ async function getAppToken() {
         scope: 'https://graph.microsoft.com/.default',
         grant_type: 'client_credentials',
       }),
+      signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
     }
   );
   const data = await res.json();
@@ -68,6 +73,7 @@ async function graphGet(url, token, extraHeaders = {}) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}`, ...extraHeaders },
+      signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
     });
     if (res.status === 429 || res.status === 503) {
       const wait = (parseInt(res.headers.get('retry-after') || '5', 10) + 1) * 1000;
@@ -167,7 +173,7 @@ function addressList(recipients) {
 async function downloadAttachmentBytes(token, msUserId, messageId, attachmentId) {
   const res = await fetch(
     `${GRAPH}/users/${msUserId}/messages/${messageId}/attachments/${attachmentId}/$value`,
-    { headers: { Authorization: `Bearer ${token}` } }
+    { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS) }
   );
   if (!res.ok) throw new Error(`attachment download: HTTP ${res.status}`);
   const ab = await res.arrayBuffer();
@@ -307,20 +313,27 @@ async function syncMailbox(dbPool, mailbox) {
  * Full tenant sync: refresh mailbox list, then sync every enabled mailbox.
  * Never throws for per-mailbox errors — returns a summary.
  */
-let syncInFlight = false;
+let syncInFlight = null; // start time of the running sync, or null
 
 async function syncAllMailboxes(dbPool) {
   if (!isConfigured()) {
     return { skipped: true, reason: 'MS_GRAPH_* env vars not set' };
   }
   if (syncInFlight) {
-    return { skipped: true, reason: 'sync already in progress' };
+    const runningMs = Date.now() - syncInFlight;
+    if (runningMs < SYNC_STALL_MS) {
+      return { skipped: true, reason: 'sync already in progress' };
+    }
+    console.error(
+      `[SYNC-HEALTH ALERT] Email sync has been running ${Math.round(runningMs / 60000)} min — starting a new run`
+    );
   }
-  syncInFlight = true;
+  const startedAt = Date.now();
+  syncInFlight = startedAt;
   try {
     return await runFullSync(dbPool);
   } finally {
-    syncInFlight = false;
+    if (syncInFlight === startedAt) syncInFlight = null;
   }
 }
 

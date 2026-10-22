@@ -302,7 +302,7 @@ async function start() {
     const { recordFailure } = require('./agentic/services/ingestFailures');
     const runSync = () =>
       msGraphSvc.syncAllMailboxes(dbPool).catch((err) => {
-        console.warn('Email sync failed:', err.message);
+        console.error('[SYNC-HEALTH ALERT] Email sync failed:', err.message);
         recordFailure(dbPool, { source: 'email_sync', reference: 'tenant sync run', error: err.message });
       });
     setTimeout(runSync, 15000); // first sync shortly after boot

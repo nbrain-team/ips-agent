@@ -110,18 +110,46 @@ async function listTenantUsers() {
   return users;
 }
 
+/**
+ * ms_mailboxes is unique on both ms_user_id and email. When an address moves
+ * to a new directory object (account deleted and recreated, or a UPN reused),
+ * the upsert on ms_user_id collides on email, and that one row used to abort
+ * the whole run before any mailbox synced — every hour from Oct 15 to Oct 22.
+ * The existing row is repointed to the new object so its mail history stays
+ * attached, and any row that still cannot be written is skipped and reported.
+ */
 async function upsertMailboxes(dbPool) {
   const users = await listTenantUsers();
+  // Enabled accounts first, so when two directory objects share an address
+  // the live one claims it.
+  users.sort((a, b) => Number(b.accountEnabled) - Number(a.accountEnabled));
+  const seen = new Set();
+  const skipped = [];
   for (const u of users) {
-    await dbPool.query(
-      `INSERT INTO ms_mailboxes (ms_user_id, email, display_name, account_enabled)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (ms_user_id) DO UPDATE SET
-         email = EXCLUDED.email,
-         display_name = EXCLUDED.display_name,
-         account_enabled = EXCLUDED.account_enabled`,
-      [u.msUserId, u.email, u.displayName, u.accountEnabled]
-    );
+    if (seen.has(u.email)) continue;
+    seen.add(u.email);
+    try {
+      await dbPool.query(
+        `UPDATE ms_mailboxes SET ms_user_id = $1
+          WHERE email = $2 AND ms_user_id <> $1
+            AND NOT EXISTS (SELECT 1 FROM ms_mailboxes WHERE ms_user_id = $1)`,
+        [u.msUserId, u.email]
+      );
+      await dbPool.query(
+        `INSERT INTO ms_mailboxes (ms_user_id, email, display_name, account_enabled)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (ms_user_id) DO UPDATE SET
+           email = EXCLUDED.email,
+           display_name = EXCLUDED.display_name,
+           account_enabled = EXCLUDED.account_enabled`,
+        [u.msUserId, u.email, u.displayName, u.accountEnabled]
+      );
+    } catch (err) {
+      skipped.push(`${u.email}: ${err.message}`);
+    }
+  }
+  if (skipped.length) {
+    console.error(`[SYNC-HEALTH ALERT] M365 mailbox list: ${skipped.length} skipped — ${skipped.slice(0, 5).join('; ')}`);
   }
   return users.length;
 }

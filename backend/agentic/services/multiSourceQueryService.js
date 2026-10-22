@@ -14,6 +14,7 @@
  */
 const Anthropic = require('@anthropic-ai/sdk');
 const TableRouter = require('./TableRouter');
+const businessTime = require('../config/businessTime');
 const { isExcludedTable, splitQualified, columnNote, VIEW_SCHEMAS, DATA_TABLES_SQL } = require('./TableMetadataVectorization');
 const { llmHttpsAgent } = require('../utils/httpAgent');
 const { withRetry, sanitizeAnthropicParams } = require('../utils/anthropicRetry');
@@ -209,10 +210,10 @@ class MultiSourceQueryService {
   }
 
   async generateSQL(question, schemaContext, tableNames, purpose = 'answer') {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = businessTime.todayISO();
     const prompt = `You are an expert PostgreSQL query writer. Write ONE read-only SELECT statement to answer the question.
 
-CURRENT DATE: ${today} (use it for relative-date math like "last month", "this year")
+CURRENT DATE: ${today} (${businessTime.BUSINESS_TIMEZONE}; use it for relative-date math like "last month", "this year")
 
 AVAILABLE TABLES (use ONLY these):
 ${schemaContext}

@@ -15,6 +15,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const clientConfig = require('../config/client-config');
 const agentFlags = require('../config/agentFlags');
+const businessTime = require('../config/businessTime');
 const ModelRouter = require('./modelRouter');
 const LongTermMemory = require('./longTermMemory');
 const SmartDatabaseTool = require('../tools/smartDatabaseTool');
@@ -48,6 +49,19 @@ const MODULE_TRIGGERS = [
   { module: 'email_drafter', pattern: /\b(draft|write|compose)( me)?( an?| the)? (email|reply|response to .{0,40}email)\b/i },
   { module: 'code_analyst', pattern: /\b(python|write (a )?script|analyze .{0,30}(csv|spreadsheet|data file))\b/i },
 ];
+
+/**
+ * A chat left open across days replays its own "today is October 20" on
+ * October 22, and the model trusts the transcript over the date in the system
+ * prompt. User turns from an earlier business day are stamped with when they
+ * were sent; assistant turns never are, so there is no stamp to imitate.
+ */
+function stampEarlierDay(m, content) {
+  if (m.role !== 'user' || !m.created_at) return content;
+  const sentOn = businessTime.toBusinessDate(m.created_at);
+  if (!sentOn || sentOn >= businessTime.todayISO()) return content;
+  return `[Sent ${businessTime.nowLabel(new Date(m.created_at))}. "Today" in this message and the reply to it means that day, not now.]\n${content}`;
+}
 
 class AgenticOrchestrator {
   constructor(dbPool, toolRegistry, { billingDbPool = null } = {}) {
@@ -207,7 +221,7 @@ Returns up to ${SmartDatabaseTool.MAX_ROWS} rows for lists and ${SmartDatabaseTo
       .slice(-20)
       .filter((m) => m.content)
       .map((m) => {
-        let content = String(m.content);
+        let content = stampEarlierDay(m, String(m.content));
         if (m.role === 'assistant' && recentAssistantWithData.includes(m)) {
           try {
             const data = typeof m.structured_results === 'string'
@@ -834,7 +848,14 @@ Rewrite the answer fixing the flagged issues. Keep everything that is well-suppo
     conversationSummary = null,
     agentModule = null,
   } = {}) {
-    const parts = [clientConfig.getSystemPrompt(agentModule || 'orchestrator_base')];
+    const parts = [
+      [
+        '=== TODAY ===',
+        businessTime.promptBlock(),
+        'This is the real current date. A conversation can stay open for days: when an earlier message says "today", it means the day it was sent, not now. Never take today\'s date from earlier messages or from timestamps in tool output.',
+      ].join('\n'),
+      clientConfig.getSystemPrompt(agentModule || 'orchestrator_base'),
+    ];
 
     if (conversationSummary) {
       parts.push(
@@ -904,11 +925,6 @@ Rewrite the answer fixing the flagged issues. Keep everything that is well-suppo
       );
     }
     parts.push(dataLines.join('\n'));
-
-    const today = new Date().toLocaleDateString('en-US', {
-      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-    });
-    parts.push(`CURRENT DATE: ${today}`);
 
     return parts.join('\n\n');
   }

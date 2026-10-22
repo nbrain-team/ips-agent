@@ -287,7 +287,7 @@ module.exports = function agentChatRoutes(dbPool, getOrchestrator) {
     try {
       // Conversation history for context (with retained structured results)
       const history = await dbPool.query(
-        `SELECT role, content, structured_results FROM agent_chat_messages WHERE session_id = $1 ORDER BY created_at DESC, id DESC LIMIT 20`,
+        `SELECT role, content, structured_results, created_at FROM agent_chat_messages WHERE session_id = $1 ORDER BY created_at DESC, id DESC LIMIT 20`,
         [req.params.id]
       );
 

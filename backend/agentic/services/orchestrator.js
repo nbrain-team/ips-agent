@@ -23,6 +23,7 @@ const ExportQueryTool = require('../tools/exportQueryTool');
 const deepResearch = require('./deepResearch');
 const { analyzeQuery } = require('./queryAnalyzer');
 const { validateOutput } = require('./outputValidators');
+const { ungroundedAmounts, FAKE_DATA_BLOCK } = require('./groundingGate');
 const { scoreResponse } = require('./confidenceScoring');
 const { recordTrace } = require('./agentTrace');
 const { withRetry, sanitizeAnthropicParams, isRetryable } = require('../utils/anthropicRetry');
@@ -227,7 +228,7 @@ Returns up to ${SmartDatabaseTool.MAX_ROWS} rows for lists and ${SmartDatabaseTo
             const data = typeof m.structured_results === 'string'
               ? m.structured_results
               : JSON.stringify(m.structured_results);
-            content += `\n\n[STRUCTURED DATA BEHIND THIS ANSWER — reuse for follow-ups instead of re-querying]\n${String(data).slice(0, 20000)}`;
+            content += `\n\n[STRUCTURED DATA BEHIND THIS ANSWER — attached by the system, never written by you. Reuse it only to reshape these same rows (chart, table, filter); a different period, account or scope needs a new query]\n${String(data).slice(0, 20000)}`;
           } catch (_e) { /* best-effort */ }
         }
         return { role: m.role === 'assistant' ? 'assistant' : 'user', content };
@@ -249,6 +250,21 @@ Returns up to ${SmartDatabaseTool.MAX_ROWS} rows for lists and ${SmartDatabaseTo
     }
     userContent.push({ type: 'text', text: messageText || '(see attachments)' });
     messages.push({ role: 'user', content: userContent });
+
+    // What an exact dollar figure in the answer may rest on: this message, the
+    // earlier turns and their stored query results, and this turn's tool output.
+    const historyEvidence = [
+      ctx.conversationSummary || '',
+      ...conversationHistory.flatMap((m) => [
+        m.content || '',
+        m.structured_results ? (typeof m.structured_results === 'string' ? m.structured_results : JSON.stringify(m.structured_results)) : '',
+      ]),
+    ];
+    const turnEvidence = [messageText || ''];
+    // Figures read off an image are not in any text the check can see.
+    let groundingChecked = Boolean(imageAttachments?.length);
+    let forceToolUse = false;
+    let groundingIssue = null;
 
     // ---- Multi-turn tool-use loop ----
     let toolCallCount = 0;
@@ -275,7 +291,9 @@ Returns up to ${SmartDatabaseTool.MAX_ROWS} rows for lists and ${SmartDatabaseTo
         system: systemPrompt,
         messages,
         tools,
+        ...(forceToolUse ? { tool_choice: { type: 'any' } } : {}),
       });
+      forceToolUse = false;
 
       // Stream every turn's text; if the model then decides to call tools we
       // discard what we streamed via a reset event? No — we buffer: only
@@ -369,10 +387,12 @@ Returns up to ${SmartDatabaseTool.MAX_ROWS} rows for lists and ${SmartDatabaseTo
             },
           });
 
+          const resultText = JSON.stringify(result.success ? (result.formatted || result.data || result) : { error: result.error }).slice(0, 60000);
+          if (result.success) turnEvidence.push(resultText);
           resultBlocks.push({
             type: 'tool_result',
             tool_use_id: tu.id,
-            content: JSON.stringify(result.success ? (result.formatted || result.data || result) : { error: result.error }).slice(0, 60000),
+            content: resultText,
             is_error: !result.success,
           });
         }
@@ -395,8 +415,49 @@ Returns up to ${SmartDatabaseTool.MAX_ROWS} rows for lists and ${SmartDatabaseTo
 
       // Final turn — its text is the answer
       finalText = response.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+      const imitatedData = FAKE_DATA_BLOCK.test(finalText);
+      if (imitatedData) finalText = finalText.replace(FAKE_DATA_BLOCK, '').trimEnd();
+
+      // An exact dollar figure no query returned is sent back once, with a
+      // query required when the turn ran none. A turn that already queried may
+      // still have added rows up by hand, so it is asked to compute in SQL.
+      if (!groundingChecked && !ctx.isCancelled?.()) {
+        groundingChecked = true;
+        const unsupported = ungroundedAmounts(finalText, {
+          evidence: turnEvidence,
+          history: historyEvidence,
+          derive: toolCallCount > 0,
+        });
+        if (unsupported.length || imitatedData) {
+          console.warn(`[grounding] session ${sessionId}: unsupported ${unsupported.join(', ') || '(imitated data block)'} after ${toolCallCount} tool call(s); re-asking`);
+          groundingIssue = { type: 'ungrounded_figures', detail: `Re-asked: ${unsupported.join(', ') || 'draft imitated a structured-data block'}` };
+          if (streamedText) streamCallback({ type: 'response_reset', data: {} });
+          messages.push({ role: 'assistant', content: finalText || '(draft)' });
+          messages.push({
+            role: 'user',
+            content:
+              `[SYSTEM CHECK — not from the user: your draft states ${unsupported.length ? unsupported.join(', ') : 'figures'}, which no query in this conversation returned` +
+              `${toolCallCount > 0 ? ' and which are not a sum or difference of returned figures' : ''}. ` +
+              'Every exact dollar figure must come from a tool result. ' +
+              (toolCallCount > 0
+                ? 'Compute totals, subtotals and differences in SQL (GROUP BY / ROLLUP / SUM FILTER) instead of adding rows yourself. '
+                : 'Run the query for exactly this period and scope now. For GL figures: query_operational_database with hint "sap.gl_lines", accounts by number, every posting source, period-close entries excluded. ') +
+              (imitatedData ? 'Never write a [STRUCTURED DATA ...] block; the system attaches real results. ' : '') +
+              'Then write the whole answer again from the results only. Do not mention this check or the draft.]',
+          });
+          forceToolUse = toolCallCount === 0;
+          continue;
+        }
+      } else if (groundingIssue) {
+        const still = ungroundedAmounts(finalText, { evidence: turnEvidence, history: historyEvidence, derive: true });
+        groundingIssue.detail += still.length ? `; still unsupported after retry: ${still.join(', ')}` : '; resolved on retry';
+      }
+
       if (!streamedText) {
         // Text wasn't streamed live (retry path) — emit it now
+        streamCallback({ type: 'response_chunk', data: { content: finalText } });
+      } else if (imitatedData) {
+        streamCallback({ type: 'response_reset', data: {} });
         streamCallback({ type: 'response_chunk', data: { content: finalText } });
       }
       break;
@@ -405,7 +466,7 @@ Returns up to ${SmartDatabaseTool.MAX_ROWS} rows for lists and ${SmartDatabaseTo
     return this._finalizeTurn(ctx, {
       mode: 'tool_use',
       finalText, toolResults, sources, tokensUsed, toolCallCount, memories,
-      structuredResults, streamCallback, startedAt,
+      structuredResults, streamCallback, startedAt, groundingIssue,
     });
   }
 
@@ -673,6 +734,7 @@ Return ONLY JSON: {"goal": "...", "steps": [{"tool": "tool_name", "description":
     const {
       mode, toolResults, sources, toolCallCount,
       memories, plan = null, subQuestions = [], structuredResults = [], startedAt,
+      groundingIssue = null,
     } = state;
     let { finalText, tokensUsed } = state;
     const { sessionId, userId, userMessage, analysis, streamCallback } = ctx;
@@ -753,7 +815,7 @@ Return ONLY JSON: {"goal": "...", "steps": [{"tool": "tool_name", "description":
         subQuestions,
         toolsUsed: toolResults,
         memoryHits: memories.length,
-        validatorIssues: validation?.issues || [],
+        validatorIssues: [...(validation?.issues || []), ...(groundingIssue ? [groundingIssue] : [])],
         confidenceScore: confidence,
         tokensUsed,
         latencyMs: processingTime,

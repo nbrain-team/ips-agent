@@ -151,6 +151,8 @@ ${ipsDomain.B1_OR_S4}
 
 ${ipsDomain.GL_QUESTIONS}
 
+${ipsDomain.FIELDVU_QUESTIONS}
+
 ${ipsDomain.BILLING_VERIFICATION}
 
 ${ipsDomain.COVERAGE_GAPS}

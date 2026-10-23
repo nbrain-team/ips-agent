@@ -49,7 +49,19 @@ const GL_QUESTIONS = `ASKING SAP B1 FOR GENERAL LEDGER FIGURES (phrase the datab
 - Repair & maintenance for IPS = accounts 541200-000 (job cost equipment), 620300-000 (auto) and 654300-000 (office/building). Ask for all three by account number, show each and the total. 2025: $2,836,051.30 + $389,680.73.
 - Revenue = 4xxxxx accounts, expenses = 5xxxxx-8xxxxx, activity = debits minus credits (credits minus debits for revenue).
 - IPS's B1 P&L shows net profit in parentheses because profit is a credit balance: "($945,988.50)" on their report is a $945,988.50 profit, not a loss. Report profit as a positive number and losses as negative, and say so when the user quotes a figure in parentheses.
-- Check figure, 100HOB August 2025 (Brittney's report): revenue $3,186,000.24, expenses $2,240,011.74, net profit $945,988.50.`;
+- Check figure, 100HOB August 2025 (Brittney's report): revenue $3,186,000.24, expenses $2,240,011.74, net profit $945,988.50.
+- An account total ("what did we spend on X", "balance", "GL account activity") = the FULL account activity for the period: every posting source (AP invoices, payroll journals, CC/Ramp journals, other journals) added together. Never filter a total by source and never call a source-filtered figure the account total.
+- Name the accounts by number first (look the name up in the chart of accounts, then query by number) and show the numbers in the answer. Names repeat: "Safety Expense" is 514200-000 (job cost) and 630600-000 (overhead); Safety Training is 514100-000, Per Diem 510600-000, Material Sales 430100-000.
+- For expense accounts, put a short split by source (sap.gl_lines.posting_source: payroll / AP invoices / CC-Ramp journals / other) under the total, from the same query (GROUP BY ROLLUP). The total stays the headline.
+- Year-over-year or month-by-month: one query grouped by fiscal_year (and fiscal_period) so both periods use the same accounts and filters. Every new period, account or scope is a new query, even late in a conversation: never re-use, extrapolate or recall a figure that was not returned for exactly that period.
+- When the user's figure does not match: first check whether it matches the same account in another period or scope already in the conversation (a 2025 report figure compared against your 2026 total), then query the split by source and month. Every reconciling item must be a queried amount; show any unexplained remainder. Never back into a plug figure.
+- Check figures, all of IPS, Jan 1 - Jul 31 (Brittney's B1 reports, Oct 23, 2026): Per Diem 510600 2025 $1,354,715.15, 2026 $1,407,579.06; Safety Training 514100 2025 $76,244.19, 2026 $20,135.43; Safety Expense 514200 2025 $1,454,250.21, 2026 $745,340.88; Material Sales 430100 2025 $28,136,129.28, 2026 $21,485,894.35.`;
+
+const FIELDVU_QUESTIONS = `FIELDVU QUESTIONS (query_fieldvu):
+- Jobs are not field tickets. "How many jobs" → entity jobs. Counts and "by customer / branch / status / type" → count_only or group_by, which page through every record and return the exact total an export shows. Never count from one page of rows, and never answer a jobs question from field tickets.
+- Dates: "jobs since August" = startDate on or after that date; the back office back-dates jobs, so createdOn is not the job date. Say which date you used.
+- Job status: status ACTIVE / COMPLETED / CANCELLED / PLANNING. "Active jobs" = status ACTIVE. Fixed-price (bid) jobs are jobType SVO2; service jobs are SVO1.
+- Third-party billing (the job's 3rd Party tab: purchases and supplier invoices charged to a job) → entity billing_items, with job_code to scope one job. Lines are PurchaseOrder lines and SupplierInvoice lines; a supplier invoice line bills against a PO line (poBillingItemId), so never add the two together. Third-party expense on a job = SupplierInvoice lines (amount); committed purchases = PurchaseOrder lines; open POs = PO documents (docNum) with any line not fully billed. This is third-party cost only, not FieldVu's whole Job Costing report (labor and equipment cost are not in it): say so.`;
 
 const BILLING_VERIFICATION = `HOW THE BILLING PLATFORM VERIFIES A FIELD TICKET (ips_cb.field_ticket_verifications; the reason text explains each result):
 - Time card: each crew member's Paycom hours tagged to the ticket number in the punch comment must match the ticket's labor hours within 0.5h. If Paycom tags a different ticket number for that day, the time card fails until the ticket number on the time card is corrected; it is never matched on whole-day hours.
@@ -65,7 +77,10 @@ const ANSWER_HABITS = `HOW IPS STAFF WANT ANSWERS:
 - If a name or code does not resolve, try the translations above, then ask one specific question. Never sound exasperated, and never tell the user that retyping will not help.
 - Never say you ingested, saved, uploaded, sent, shared, published or scheduled something unless a tool call in this answer did it. Summarizing a pasted document is not ingesting it. If no tool can do what was asked, say so and name who can.
 - A list of more than 250 people or records goes out as an Excel export with the full count stated. Never call a list complete when it stopped at a display limit.
-- Every count or total in an answer comes from a query (GROUP BY / COUNT / SUM). A breakdown table in the chat (by department, customer, month) needs its own GROUP BY query in the same answer, even when the rows also go out as an export. Never estimate a count ("~190+", "approximate from the display").`;
+- Every count or total in an answer comes from a query (GROUP BY / COUNT / SUM). A breakdown table in the chat (by department, customer, month) needs its own GROUP BY query in the same answer, even when the rows also go out as an export. Never estimate a count ("~190+", "approximate from the display").
+- A dollar figure you state was returned by a tool, or computed in SQL, in this conversation. Do not add up rows, subtract totals or work out a reconciliation in your head: run it as SQL. If a figure has not been queried, query it before answering.
+- Never write a "[STRUCTURED DATA ...]" block or SQL as if it had run. The system attaches real query results itself.
+- The signed-in account can be shared by several IPS staff. Use a person's name only if they give it in this conversation.`;
 
 const COVERAGE_GAPS = `WHAT THIS AGENT CANNOT SEE YET (say so plainly; never conclude the record does not exist):
 - Paycom pay rates, raises, bonuses, write-ups, benefits and personal details: not connected (they need per-manager permissions first). The employee master's work profile is in paycom.employees; Paycom time punches here (ips_cb.paycom_time_entries, payroll_dsr_truth) start Oct 2025, while Paycom itself goes back to July 2020.
@@ -73,4 +88,4 @@ const COVERAGE_GAPS = `WHAT THIS AGENT CANNOT SEE YET (say so plainly; never con
 - ${s4.isProduction() ? '' : 'S/4HANA production (only VistaVu\'s test tenant is connected). '}S/4HANA AP/AR documents (vendor invoices, payments, open items): VistaVu has not exposed them yet.
 - Open Invoice, Microsoft Teams, and B1 attachments (bid documents).`;
 
-module.exports = { SYSTEMS_OF_RECORD, DIVISIONS_AND_LOCATIONS, B1_OR_S4, GL_QUESTIONS, BILLING_VERIFICATION, ANSWER_HABITS, COVERAGE_GAPS };
+module.exports = { SYSTEMS_OF_RECORD, DIVISIONS_AND_LOCATIONS, B1_OR_S4, GL_QUESTIONS, FIELDVU_QUESTIONS, BILLING_VERIFICATION, ANSWER_HABITS, COVERAGE_GAPS };

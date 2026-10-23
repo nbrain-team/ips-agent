@@ -64,7 +64,8 @@ const SAP_B1_JOIN_NOTES = `SAP B1 JOIN KEYS (tables in schema sap_b1):
 - cancelled / canceled are booleans: add "NOT cancelled" (field_tickets: "NOT canceled") unless cancelled documents are asked for.
 
 SAP B1 GENERAL LEDGER MATH (checked against IPS accounting's own B1 figures):
-- Account numbers: users write the FormatCode with a dash ("541200-000"). Match chart_of_accounts.raw_data->>'FormatCode' = '541200000'; journal_entry_lines.account_code is the internal _SYS code.
+- Account numbers: users write the FormatCode with a dash ("541200-000"). Match chart_of_accounts.raw_data->>'FormatCode' = '541200000'; journal_entry_lines.account_code is the internal _SYS code. Never select accounts by name: "Safety Expense" is two accounts (514200-000 job cost, 630600-000 overhead) and name matches catch neighbours.
+- An account's activity includes every origin_type (AP invoices, payroll and CC/Ramp journal entries, receipts): never filter a total by origin_type. Prefer sap.gl_lines, whose posting_source column splits a total by source.
 - Dates: journal_entries.reference_date IS B1's posting date. due_date normally equals it. Filter periods on reference_date.
 - Year-end close: every 12/31 an entry with journal_entries.origin_type = 'ttClosingBalance' zeroes each revenue and expense account into retained earnings. Exclude 'ttClosingBalance' and 'ttOpeningBalance' from any period activity, total or P&L.
 - An account's activity for a period = SUM(debit - credit) for expenses, SUM(credit - debit) for revenue, closing entries excluded. Never sum debits alone or credits alone: credit memos, receipts and reversals post to the other side. (GL 541200-000 in 2025 = $2,836,051.30 net; debits alone overstate it by about $100K.)
@@ -94,7 +95,10 @@ const SAP_GL_LINES_NOTES = `sap.gl_lines — ONE general ledger across the S/4HA
 - Prefer it over sap_b1.journal_entry_lines / sap_s4.journal_entry_items for any GL, P&L, account or profit-center question, and always when the period crosses August 1, 2026. Never add sap_b1 or sap_s4 journal tables to it: it already holds both.
 - amount is signed (debit positive). Account activity = SUM(amount); revenue = -SUM(amount) WHERE account_class = 'revenue'; expenses = SUM(amount) WHERE account_class = 'expense'.
 - Exclude is_period_close (B1 year-end closing and opening entries) from any period activity or P&L; keep it for balance-sheet balances. Leave account_class 'allocation' out of company-wide P&L totals (it nets to zero) but include it for one profit center.
-- gl_account is the shared number without the dash: '541200' = B1 541200-000. profit_center = division + location ('100HOB'); division and location are also separate columns. Group by source_system when the user should see which system each figure came from.`;
+- gl_account is the shared number without the dash: '541200' = B1 541200-000. profit_center = division + location ('100HOB'); division and location are also separate columns. Group by source_system when the user should see which system each figure came from.
+- An account total is EVERY line on that account: AP invoices, payroll journals, CC/Ramp journals and other journals together. Never filter a total by document_type or posting_source. posting_source (AP invoice | AR invoice | Payment | Payroll journal | Credit card / Ramp journal | Other journal entry) only splits it: GROUP BY ROLLUP (gl_account, posting_source) gives the split and the total in one result.
+- Select accounts by number (gl_account IN ('514100', '514200')), never by gl_account_name: names repeat ("Safety Expense" is both 514200 job cost and 630600 overhead) and ILIKE also catches other accounts. Include gl_account in the output.
+- Comparing periods (2025 vs 2026, month by month): one query with GROUP BY fiscal_year (and fiscal_period), so every period uses the same accounts and filters. Totals, subtotals and differences come from the SQL, not from adding rows afterwards.`;
 
 const RAMP_NOTES = `RAMP (IPS corporate cards, schema ramp):
 - KEYS: ramp_id (text) is Ramp's own id. The integer "id" column is a local row number: never join or filter on it.

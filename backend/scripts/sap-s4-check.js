@@ -5,9 +5,9 @@
  *   node scripts/sap-s4-check.js --host my434651-api.s4hana.cloud.sap --creds ~/Downloads/ips-sap-uat.env
  *
  * --creds is a file with Username= / Password= lines (else SAP_S4_USERNAME /
- * SAP_S4_PASSWORD). Billing numbers are matched against FieldVu's S/4 billing
- * numbers (fieldvu.field_tickets via DATABASE_URL, or --fieldvu-ids <file>)
- * to tell IPS's live books from a test system.
+ * SAP_S4_PASSWORD). Recently invoiced FieldVu tickets (fieldvu.field_tickets via
+ * DATABASE_URL, or --fieldvu-tickets <file of ticket numbers>) are looked up by
+ * field ticket number to tell IPS's live books from a test system.
  *
  * Makes exactly one request before it knows the login works, and stops on a
  * 401: SAP locks the user after a few failed logons.
@@ -107,39 +107,38 @@ const sapDate = (v) => {
     const created = await client.count('BILLDOCITEM', `(CreationDate ge datetime'${since}T00:00:00') and ${en}`);
     const lo = await first(client, 'BILLDOCITEM', 'BillingDocument', { filter: en });
     const hi = await first(client, 'BILLDOCITEM', 'BillingDocument', { filter: `${en} and BillingDocument lt 'A'`, desc: true });
-    liveNumbers = Number(hi) >= 9000000000;
     console.log(`  documents ${lo} to ${hi}; ${created} items created since ${since} (CreationDate filter works)`);
   } catch (err) {
     console.log(`  ERROR ${err.message}`);
     problems.push(`billing: ${err.message}`);
   }
 
-  let fieldvuIds = null;
-  if (arg('--fieldvu-ids')) {
-    fieldvuIds = fs.readFileSync(arg('--fieldvu-ids').replace(/^~/, process.env.HOME), 'utf8').match(/\b9\d{9}\b/g) || [];
+  let tickets = null;
+  if (arg('--fieldvu-tickets')) {
+    tickets = fs.readFileSync(arg('--fieldvu-tickets').replace(/^~/, process.env.HOME), 'utf8').match(/\b\d+\b/g) || [];
   } else if (process.env.DATABASE_URL) {
     const { Pool } = require('pg');
     const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL) ? false : { rejectUnauthorized: false } });
     try {
       const { rows } = await pool.query(
-        `SELECT DISTINCT billing_document_id AS id FROM fieldvu.field_tickets
-          WHERE billing_document_id ~ '^9\\d{9}$' ORDER BY 1 DESC LIMIT 20`
+        `SELECT doc_num::text AS ticket FROM fieldvu.field_tickets
+          WHERE billing_document_id IS NOT NULL ORDER BY ticket_date DESC, doc_num DESC LIMIT 20`
       );
-      fieldvuIds = rows.map((r) => r.id);
+      tickets = rows.map((r) => r.ticket);
     } catch (err) {
       console.log(`  FieldVu comparison skipped: ${err.message}`);
     } finally {
       await pool.end();
     }
   }
-  if (fieldvuIds) {
-    fieldvuIds = fieldvuIds.slice(0, 20);
+  if (tickets) {
+    tickets = tickets.slice(0, 20);
     let found = 0;
-    for (const id of fieldvuIds) {
-      if ((await client.count('BILLDOCITEM', `BillingDocument eq '${id}'`)) > 0) found++;
+    for (const t of tickets) {
+      if ((await client.count('BILLDOCITEM', `YY1_FieldTicketNo_BDI eq '${t.padStart(10, '0')}'`)) > 0) found++;
     }
-    console.log(`  FieldVu: ${found} of ${fieldvuIds.length} S/4 billing numbers from FieldVu tickets exist in this tenant`);
-    liveNumbers = fieldvuIds.length > 0 && found >= fieldvuIds.length / 2;
+    console.log(`  FieldVu: ${found} of ${tickets.length} recently invoiced FieldVu tickets have billing items here`);
+    liveNumbers = tickets.length > 0 && found >= tickets.length / 2;
   }
 
   console.log(`\nVerdict: ${liveNumbers ? "billing matches IPS's live FieldVu tickets: this looks like PRODUCTION" : 'billing does not match FieldVu: a TEST system, not IPS\'s books'}`);

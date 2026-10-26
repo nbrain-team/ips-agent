@@ -118,7 +118,7 @@ JOBS (camelCase fields): code, name, customerName, startDate, endDate, createdOn
 
 BILLING_ITEMS = the job's 3rd Party tab: sourceDocType (PurchaseOrder | SupplierInvoice), docNum, jobId, description, supplierName, supplierCode, unitCost, quantity, amount (unitCost × quantity, credit memos negative), isFullyBilled, remainingQuantity, billable, markup, invoiceDate, poBillingItemId (the PO line a supplier invoice line bills against: never add PO and invoice lines together). Pass job_code to scope one job.
 
-FIELD TICKET HEADERS (PascalCase fields): DocNum, Date, JobCode, JobName, CustomerCode, CustomerName, Status (e.g. Approved/Submitted), CreatedBy, Description, BillingDocumentId.
+FIELD TICKET HEADERS (PascalCase fields): DocNum, Date, JobCode, JobName, CustomerCode, CustomerName, Status (e.g. Approved/Submitted), CreatedBy, Description, BillingDocumentId (set once a ticket is invoiced; it is FieldVu's reference, not the S/4 billing document number: S/4 billing items link by field ticket number).
 
 COUNTS AND TOTALS: a list returns at most 100 rows, so it is never a count. For "how many" use count_only (exact total matching the filter). For "by customer / status / branch / type" or a dollar total use group_by (pages through every match; returns count per value, and amount totals for billing_items).
 

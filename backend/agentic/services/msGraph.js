@@ -98,12 +98,15 @@ async function graphGet(url, token, extraHeaders = {}) {
 async function listTenantUsers() {
   const token = await getAppToken();
   const users = [];
-  let url = `${GRAPH}/users?$select=id,displayName,mail,userPrincipalName,accountEnabled&$top=999`;
+  let url = `${GRAPH}/users?$select=id,displayName,mail,userPrincipalName,accountEnabled,userType&$top=999`;
   while (url) {
     const data = await graphGet(url, token);
     for (const u of data.value || []) {
+      // Guests have no mailbox in this tenant; their `mail` is their outside
+      // address, so the #ext# UPN check alone never caught them.
+      if (u.userType === 'Guest') continue;
       const email = (u.mail || u.userPrincipalName || '').toLowerCase();
-      if (!email || email.includes('#ext#')) continue; // skip guests
+      if (!email || email.includes('#ext#')) continue;
       users.push({
         msUserId: u.id,
         email,
@@ -347,6 +350,7 @@ async function runFullSync(dbPool) {
 
   let ok = 0;
   let failed = 0;
+  let noMailboxCount = 0;
   let totalSaved = 0;
   for (const mb of mailboxes) {
     try {
@@ -360,11 +364,15 @@ async function runFullSync(dbPool) {
         [mb.email, mb.id]
       );
     } catch (err) {
-      failed++;
-      // Common: MailboxNotEnabledForRESTAPI (unlicensed/shared), ErrorAccessDenied (consent)
+      // No Exchange Online mailbox (unlicensed, shared, guest) is not a sync
+      // failure; it is still retried each run in case a license is added.
+      const noMailbox =
+        err.code === 'MailboxNotEnabledForRESTAPI' || /mailbox is either inactive/i.test(err.message);
+      if (noMailbox) noMailboxCount++;
+      else failed++;
       await dbPool.query(
-        `UPDATE ms_mailboxes SET sync_status = 'error', sync_error = $1 WHERE id = $2`,
-        [String(err.message).slice(0, 500), mb.id]
+        `UPDATE ms_mailboxes SET sync_status = $1, sync_error = $2 WHERE id = $3`,
+        [noMailbox ? 'no_mailbox' : 'error', String(err.message).slice(0, 500), mb.id]
       );
     }
   }
@@ -373,6 +381,7 @@ async function runFullSync(dbPool) {
     mailboxes: mailboxes.length,
     synced_ok: ok,
     failed,
+    no_mailbox: noMailboxCount,
     new_messages: totalSaved,
     duration_s: Math.round((Date.now() - started) / 1000),
   };

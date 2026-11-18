@@ -389,4 +389,33 @@ async function runFullSync(dbPool) {
   return summary;
 }
 
-module.exports = { isConfigured, getAppToken, graphGet, listTenantUsers, syncAllMailboxes, GRAPH };
+/**
+ * Send an HTML email as `from` (a mailbox in the IPS tenant). Needs the
+ * Mail.Send APPLICATION permission with admin consent; without it Graph
+ * answers 403 and the error is thrown to the caller.
+ */
+async function sendMail({ from, to, subject, html }) {
+  const token = await getAppToken();
+  const res = await fetch(`${GRAPH}/users/${encodeURIComponent(from)}/sendMail`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: {
+        subject,
+        body: { contentType: 'HTML', content: html },
+        toRecipients: to.map((address) => ({ emailAddress: { address } })),
+      },
+      saveToSentItems: false,
+    }),
+    signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const err = new Error(data.error?.message || `Graph sendMail ${res.status}`);
+    err.status = res.status;
+    err.code = data.error?.code;
+    throw err;
+  }
+}
+
+module.exports = { isConfigured, getAppToken, graphGet, listTenantUsers, syncAllMailboxes, sendMail, GRAPH };

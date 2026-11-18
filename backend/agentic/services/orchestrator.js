@@ -154,8 +154,12 @@ Returns up to ${SmartDatabaseTool.MAX_ROWS} rows for lists and ${SmartDatabaseTo
       console.error('Orchestrator error:', err);
       const status = err?.status || err?.statusCode;
       const retryable = isRetryable(err);
-      const friendly =
-        status === 429 || status === 529
+      const accountProblem =
+        status === 401 || status === 403 || /credit balance|usage limits?/i.test(String(err?.message || ''));
+      if (accountProblem) require('./apiMonitor').onChatAuthFailure(this.dbPool);
+      const friendly = accountProblem
+        ? 'The AI service is unavailable right now because its API account needs attention. The administrators have been notified.'
+        : status === 429 || status === 529
           ? 'The AI service is at capacity right now.'
           : retryable
             ? 'A temporary connection issue interrupted the response.'

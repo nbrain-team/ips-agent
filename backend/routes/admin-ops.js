@@ -7,12 +7,16 @@
  * - POST /failures/:id/resolve
  * - POST /crawl           trigger a website re-crawl now
  * - POST /vectorize       trigger table re-profiling now
+ * - GET  /api-health      AI provider key / spend checks (POST /api-health/run to re-check now)
+ * - GET  /api-health/spend-history?months=3   Anthropic spend by month (Admin key)
+ * - POST /api-health/test-email
  */
 const express = require('express');
 const path = require('path');
 const { spawn } = require('child_process');
 const TableMetadataVectorization = require('../agentic/services/TableMetadataVectorization');
 const msGraph = require('../agentic/services/msGraph');
+const apiMonitor = require('../agentic/services/apiMonitor');
 
 // Rough blended $/1M tokens per model family — for directional cost tracking,
 // not billing. Unknown models fall back to DEFAULT_RATE.
@@ -190,6 +194,41 @@ module.exports = function adminOpsRoutes(dbPool, billingDbPool) {
         [req.params.id]
       );
       res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ---- AI provider health (apiMonitor) -----------------------------------
+  router.get('/api-health', async (_req, res) => {
+    try {
+      res.json(await apiMonitor.getStatus(dbPool));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/api-health/run', async (_req, res) => {
+    try {
+      await apiMonitor.runChecks(dbPool, { reason: 'manual (admin)' });
+      res.json(await apiMonitor.getStatus(dbPool));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get('/api-health/spend-history', async (req, res) => {
+    const months = Math.min(Math.max(parseInt(req.query.months || '3', 10) || 3, 1), 12);
+    try {
+      res.json(await apiMonitor.spendHistory(months));
+    } catch (err) {
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  });
+
+  router.post('/api-health/test-email', async (_req, res) => {
+    try {
+      res.json(await apiMonitor.sendTestEmail(dbPool));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

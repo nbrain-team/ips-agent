@@ -577,6 +577,19 @@ async function start() {
   } else {
     console.log('🎥 Zoom recording sync disabled (no ZOOM_<LABEL>_ACCOUNT_ID / _CLIENT_ID / _CLIENT_SECRET set)');
   }
+
+  // 14. AI provider health (Anthropic / OpenAI keys, Anthropic spend vs budget):
+  //     hourly, emailing admins when a key dies, credit runs out or spend
+  //     crosses a budget threshold.
+  const apiMonitor = require('./agentic/services/apiMonitor');
+  const apiCheckMin = parseInt(process.env.API_MONITOR_INTERVAL_MIN || '60', 10);
+  if (apiCheckMin > 0) {
+    const runApiChecks = (reason) =>
+      apiMonitor.runChecks(dbPool, { reason }).catch((err) => console.warn('API health check failed:', err.message));
+    setTimeout(() => runApiChecks('boot'), 60000);
+    setInterval(() => runApiChecks('scheduled'), apiCheckMin * 60000);
+    console.log(`🩺 API health check scheduled every ${apiCheckMin}m`);
+  }
 }
 
 // Safety net: background jobs (email sync, attachment extraction, crawls)
